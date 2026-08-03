@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -54,6 +55,18 @@ NODE_INSTALL_SUBCOMMANDS = frozenset({"install", "i", "add"})
 
 PIPS = frozenset({"pip", "pip3"})
 PYTHON = re.compile(r"^python[0-9.]*$")
+
+
+def trash_command() -> str:
+    """本机的回收站命令。Linux 是 trash-cli 的 trash-put，Git Bash 下通常只有 trash。
+
+    提示文案里要给出实际能执行的命令，否则等于没给。
+
+    """
+    for name in ("trash-put", "trash"):
+        if shutil.which(name):
+            return name
+    return "trash-put"
 
 
 def deny(reason: str) -> None:
@@ -143,20 +156,21 @@ def check_deletes(commands: list[Command], raw: str) -> None:
     if ESCAPE_HATCH in raw:  # 显式声明要真删，放行
         return
 
+    trash = trash_command()
+
     for cmd in commands:
         if cmd.name in DELETERS:
             if cmd.escalates:
                 deny(
                     f"`sudo {cmd.name}` 绕过回收站，删除不可恢复：sudo 使用 secure_path，"
-                    f"不解析 ~/.claude/shim 中的 rm 替身。\n"
-                    f"改用 `trash-put`；需要 root 权限时用 `sudo trash-put`，"
-                    f"回收站位于该分区的 .Trash-0。\n"
+                    f"不解析 PATH 中的 rm 替身。\n"
+                    f"改用 `{trash}`；需要 root 权限时用 `sudo {trash}`。\n"
                     f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
                 )
             if cmd.is_path_qualified:
                 deny(
                     f"`{cmd.word}` 以绝对路径调用，绕过 PATH 中的回收站替身，删除不可恢复。\n"
-                    f"改用 `trash-put`，或去掉路径写作 `{cmd.name}`，替身会将其转为回收站操作。\n"
+                    f"改用 `{trash}`，或去掉路径写作 `{cmd.name}`，替身会将其转为回收站操作。\n"
                     f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
                 )
 
@@ -165,7 +179,7 @@ def check_deletes(commands: list[Command], raw: str) -> None:
                 deny(
                     "`find -delete` 在 find 进程内部直接 unlink，不经过外部命令，"
                     "回收站替身无法覆盖，删除不可恢复。\n"
-                    "改用 `find ... -exec trash-put {} +`。\n"
+                    f"改用 `find ... -exec {trash} {{}} +`。\n"
                     f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
                 )
             for flag in ("-exec", "-execdir"):
@@ -174,7 +188,7 @@ def check_deletes(commands: list[Command], raw: str) -> None:
                     if target and PurePosixPath(target[0]).name in DELETERS and "/" in target[0]:
                         deny(
                             f"`find {flag} {target[0]}` 以绝对路径调用删除命令，绕过回收站替身。\n"
-                            f"改用 `find ... {flag} trash-put {{}} +`。\n"
+                            f"改用 `find ... {flag} {trash} {{}} +`。\n"
                             f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
                         )
 

@@ -59,37 +59,59 @@ if [ ! -e "$DEST/LOCAL.md" ]; then
     echo "已创建  LOCAL.md（空壳，本机信息写在这里）"
 fi
 
-# PATH 片段。不写进 shell rc：Claude Code 的 Bash 工具是非交互非登录 shell，
-# 既不读 .bashrc 也不读 .profile，写在那里替身不会进入 PATH。失效过程没有征兆，
-# 而 guard-bash.py 有意放行普通 rm，前提正是替身已就位。
-# bash 对非交互 shell 会读 $BASH_ENV，故改由它载入。
-FRAGMENT="${XDG_CONFIG_HOME:-$HOME/.config}/shell/path.sh"
+# 替身入口。必须落在 Claude Code 继承到的 PATH 中、且排在真正的 rm 之前的目录。
+#
+# 写进 shell rc 无效：Claude Code 的 Bash 工具是非交互非登录 shell，不读
+# .bashrc 与 .profile。设 settings.json 的 env.BASH_ENV 同样无效：Claude Code
+# 起 shell 后会 source 自己的 shell snapshot，其中的 export PATH=... 取自进程
+# 环境，会把 BASH_ENV 阶段前置的路径整体覆盖。
+#
+# 唯一可靠的位置是 PATH 里本就存在、排在真 rm 之前的目录。失效没有征兆，而
+# guard-bash.py 有意放行普通 rm，前提正是替身已就位，所以这一步必须落实。
 
-if [ ! -e "$FRAGMENT" ]; then
-    mkdir -p "$(dirname "$FRAGMENT")"
-    cat > "$FRAGMENT" <<EOF
-# 由 ~/.claude/settings.json 的 env.BASH_ENV 载入。
-# 也可从自己的 shell rc 中 source，两者不冲突。
-case ":\$PATH:" in
-    *":$DEST/shim:"*) ;;
-    *) PATH="$DEST/shim:\$PATH" ;;
+for c in /usr/bin/rm /bin/rm; do
+    [ -x "$c" ] && REAL_RM=$c && break
+done
+REAL_DIR=$(dirname "${REAL_RM:-/usr/bin/rm}")
+
+# Git Bash 把 ~/bin 自动前置到 PATH 首位，即使目录尚不存在。
+case "${OSTYPE:-}" in
+    msys* | cygwin*) mkdir -p "$HOME/bin" ;;
 esac
-export PATH
-EOF
-    echo "已创建  ${FRAGMENT#"$HOME/"}（PATH 片段）"
+
+ANCHOR=
+OLD_IFS=$IFS
+IFS=:
+for d in $PATH; do
+    [ -n "$d" ] || continue
+    [ "$d" = "$REAL_DIR" ] && break
+    if [ -d "$d" ] && [ -w "$d" ]; then
+        ANCHOR=$d
+        break
+    fi
+done
+IFS=$OLD_IFS
+
+write_forwarder() {
+    printf '#!/bin/sh\n# 由 claude-hardgate 的 install.sh 生成。实现在 %s/shim/rm。\nexec "%s/shim/rm" "$@"\n' \
+        "$DEST" "$DEST" > "$1"
+    chmod +x "$1"
+}
+
+if [ -n "$ANCHOR" ]; then
+    write_forwarder "$ANCHOR/rm"
+    echo "已就位  $ANCHOR/rm（替身入口，先于 $REAL_DIR/rm）"
 else
-    grep -qF "$DEST/shim" "$FRAGMENT" \
-        || echo "注意：$FRAGMENT 已存在但未前置 $DEST/shim，请自行加入" >&2
+    echo "未找到可写且排在 $REAL_DIR 之前的 PATH 目录。" >&2
+    echo "请手动放置转发脚本，例如：" >&2
+    echo "    sudo sh -c 'printf \"#!/bin/sh\\nexec \\\"$DEST/shim/rm\\\" \\\"\\\$@\\\"\\n\" > /usr/local/bin/rm && chmod +x /usr/local/bin/rm'" >&2
 fi
 
 echo
-echo "还需手动完成一步，把下面两个字段合并进 $DEST/settings.json："
-echo
-echo '  "env": { "BASH_ENV": "'"$FRAGMENT"'" },'
-echo "  \"hooks\": …（取自 settings.hooks.json）"
+echo "还需手动完成一步，把 settings.hooks.json 的 hooks 字段合并进 $DEST/settings.json。"
 echo
 echo "安装后需实测确认：在 Claude Code 中执行 command -v rm，"
-echo "结果应为 $DEST/shim/rm。"
+echo "结果应为上面那个替身入口的路径。若为 $REAL_DIR/rm，说明未生效。"
 echo
 if [ "$COPIED" = 1 ]; then
     echo "本次为拷贝安装。要改规则请改本仓库再重跑 install.sh，不要直接改 $DEST 下的副本。" >&2

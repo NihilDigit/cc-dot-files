@@ -53,26 +53,21 @@ sh -c 'cd /tmp && rm -rf junk'       # -c 的参数递归展开
 sh install.sh
 ```
 
-脚本把文件软链到 `~/.claude/` 下的对应位置，不覆盖已存在的文件。之后把 `settings.hooks.json` 的 `hooks` 和 `env` 两个字段合并进 `~/.claude/settings.json`，其中 `env.BASH_ENV` 要改成本机的绝对路径。
+脚本把文件软链到 `~/.claude/` 下的对应位置，不覆盖已存在的文件，并在 PATH 中安装替身入口（见下节）。之后把 `settings.hooks.json` 的 `hooks` 字段合并进 `~/.claude/settings.json`。
 
-## PATH 替身为什么走 BASH_ENV 而不是 shell rc
+## 替身入口放在哪
 
-写进 `~/.bashrc` 或 `~/.zshrc` 不生效。Claude Code 的 Bash 工具起的是非交互非登录 shell（`$-` 为 `hBc`，`shopt login_shell` 为 off），bash 在这种模式下既不读 `.bashrc` 也不读 `.profile`，替身不会进入 PATH。
+替身必须落在 Claude Code 继承到的 PATH 中、且排在真正的 `rm` 之前的目录里。有两种看起来可行、实际无效的做法：
 
-失效过程没有任何征兆。`guard-bash.py` 只拦 `/bin/rm`、`sudo rm`、`find -delete` 三种绕过写法，普通的 `rm -rf x` 交由替身接管，因此被有意放行。替身不在 PATH 中时，这条命令解析到真正的 `rm`，删除不可恢复，执行过程中不报错。
+**写进 shell rc 无效。** Claude Code 的 Bash 工具起的是非交互非登录 shell（`$-` 为 `hBc`，`shopt login_shell` 为 off），bash 在这种模式下既不读 `.bashrc` 也不读 `.profile`。
 
-bash 对非交互 shell 会读 `$BASH_ENV` 指向的文件。因此把它设在 `~/.claude/settings.json` 的 `env` 里，指向一个前置 PATH 的片段：
+**设 `env.BASH_ENV` 也无效。** bash 对非交互 shell 确实会读 `$BASH_ENV`，但 Claude Code 起 shell 后会 source 自己的 shell snapshot，其中有一行 `export PATH=...`，内容取自进程环境，会把 `BASH_ENV` 阶段前置的路径整体覆盖。
 
-```sh
-# ~/.config/shell/path.sh
-case ":$PATH:" in
-    *":$HOME/.claude/shim:"*) ;;
-    *) PATH="$HOME/.claude/shim:$PATH" ;;
-esac
-export PATH
-```
+`install.sh` 因此从 PATH 中挑一个排在真 `rm` 之前、当前可写的目录，在那里装一个转发到 `~/.claude/shim/rm` 的入口脚本。Git Bash 下通常是 `~/bin`（它被自动前置到 PATH 首位）；Linux 下 `/usr/local/bin` 排在 `/usr/bin` 之前但需要 root，此时脚本会打印出对应的 `sudo` 命令，由你执行。
 
-安装后需实测确认，不能只检查配置文件。在 Claude Code 中执行 `command -v rm`，结果应为 `~/.claude/shim/rm`；若为 `/usr/bin/rm`，说明替身未生效。
+这一步不能省。失效过程没有任何征兆：`guard-bash.py` 只拦 `/bin/rm`、`sudo rm`、`find -delete` 三种绕过写法，普通的 `rm -rf x` 交由替身接管，因此被有意放行。替身不在 PATH 中时，这条命令解析到真正的 `rm`，删除不可恢复，且不报错。
+
+安装后需实测确认，不能只检查配置文件。在 Claude Code 中执行 `command -v rm`，结果应为入口脚本的路径；若为 `/usr/bin/rm`，说明未生效。
 
 ## Windows（Git Bash）
 

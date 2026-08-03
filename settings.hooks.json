@@ -1,8 +1,4 @@
 {
-  "_comment_env": "BASH_ENV 取本机绝对路径，指向将 ~/.claude/shim 前置进 PATH 的片段。Claude Code 的 Bash 工具是非交互非登录 shell，不读 .bashrc 与 .profile，替身由此载入。合并时改为本机路径并删除本注释。",
-  "env": {
-    "BASH_ENV": "/home/YOU/.config/shell/path.sh"
-  },
   "hooks": {
     "PreToolUse": [
       {
