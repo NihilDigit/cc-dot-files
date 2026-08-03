@@ -13,11 +13,11 @@
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/guard-bash.py",
+            "command": "python3 ~/.claude/hooks/guard-shell.py",
             "timeout": 60,
             "statusMessage": "检查删除、全局安装与 git 破坏性操作"
           }

@@ -18,15 +18,17 @@
 
 ## 硬门控
 
-以下三条由 `~/.claude/hooks/` 的 PreToolUse hook 和 `~/.claude/shim/` 的 PATH 替身强制执行。
+以下三条由 `~/.claude/hooks/` 的 PreToolUse hook 和 `~/.claude/shim/` 的 PATH 替身强制执行，Bash 与 PowerShell 两个工具都覆盖。
 
 **改文件**。改动前检查文件是否被 git 跟踪。已跟踪的直接放行；未跟踪的（不在仓库内、新建未 add、或被 .gitignore 排除）先复制一份 `<文件名>.<时间戳>.bak` 再放行。不要读取、提交或清理这些 .bak。
 
-**删文件**。删除用 `trash-put`，找回用 `trash-list` 和 `trash-restore`。直接写 `rm` 同样安全，PATH 中的替身会将其转为回收站操作。以下三种写法绕过替身且不可恢复，会被 hook 拒绝：
+**删文件**。删除用 `trash-put`，找回用 `trash-list` 和 `trash-restore`。Bash 工具里直接写 `rm` 同样安全，PATH 中的替身会将其转为回收站操作。以下三种写法绕过替身且不可恢复，会被 hook 拒绝：
 
 - 绝对路径调用，如 `/bin/rm`
 - `sudo rm`，sudo 使用 secure_path，不解析用户 PATH
 - `find -delete`，删除在 find 进程内完成，不经过外部命令
+
+**PowerShell 工具里没有替身**：`rm`、`del`、`ri`、`rd`、`erase` 都是 `Remove-Item` 的内建别名，别名解析先于 PATH 查找，替身没有介入的机会。那边所有文件删除一律被拒绝，改用 `trash <路径>`。`[IO.File]::Delete()` 一类 .NET 调用同样被拒。删别名和环境变量（`Remove-Item Alias:x`、`Env:X`）不算文件删除，放行。
 
 确需不可恢复的删除时加 `CLAUDE_ALLOW_RM=1` 前缀，并事先向我确认。
 

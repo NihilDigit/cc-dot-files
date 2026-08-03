@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""PreToolUse / Bash 门控。
+"""PreToolUse / Bash 与 PowerShell 门控。
 
-承担两项检查：
-
-1. 删除。不拦截普通的 `rm`，PATH 中的 ~/.claude/shim/rm 会将其转为回收站操作。
-   此处仅拦截 shim 无法覆盖的写法：绝对路径调用、sudo（使用 secure_path，
-   不解析用户 PATH）、以及在进程内部直接 unlink 的 find -delete。
-
-2. git。reset、checkout、clean 一类命令在工作区存在未提交改动时会将其丢弃。
-   执行前生成一份不修改工作区的快照，再放行，并告知快照位置。
-
-删除命令的判定基于 lib/shellcmds 的词法切分而非正则匹配，
+承担三项检查：删除、全局安装、git 破坏性命令。判定一律基于词法切分而非正则，
 `adb shell rm -rf /data/x` 因此不会被误判，其中的 rm 是 adb 的参数。
+
+两种 shell 用各自的解析器（lib/shellcmds、lib/pwshcmds），删除策略也不同：
+
+- Bash 侧放行普通 `rm`，PATH 中的 ~/.claude/shim/rm 会将其转为回收站操作，
+  只拦替身覆盖不到的写法：绝对路径调用、sudo（secure_path 不解析用户 PATH）、
+  以及在进程内部直接 unlink 的 find -delete。
+- PowerShell 侧一律拒绝。rm/del/ri/rd/erase 都是 Remove-Item 的内建别名，
+  名字解析顺序把 PATH 替身排在最后，替身没有介入的机会；Claude Code 又以
+  -NoProfile 启动 pwsh，函数覆盖那条路同样走不通。这里只能拒绝，让调用方改用 trash。
+
+装包与 git 两项检查两边共用，命令词的语义在两种 shell 下是一致的。
 """
 
 from __future__ import annotations
@@ -25,11 +27,34 @@ import sys
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-sys.path.insert(0, str(Path(__file__).parent / "lib"))
-from shellcmds import Command, ParseError, executed_commands  # noqa: E402
+# 安装后解析器在 hooks/lib/ 下；直接在仓库里跑时它们与本文件同级。
+sys.path[:0] = [str(Path(__file__).parent / "lib"), str(Path(__file__).parent)]
+import pwshcmds  # noqa: E402
+import shellcmds  # noqa: E402
+from shellcmds import Command, ParseError  # noqa: E402
 
 # 会不可逆删除文件的程序。
 DELETERS = frozenset({"rm", "unlink", "shred", "srm", "wipe"})
+
+# PowerShell 侧的删除命令。别名已由 pwshcmds 归一到 cmdlet 名。
+PWSH_DELETERS = frozenset({"remove-item"})
+
+# 切分失败时只剩逐词比对，此时别名尚未归一，需要连同别名一起认。
+PWSH_DELETE_WORDS = PWSH_DELETERS | {
+    alias for alias, target in pwshcmds.ALIASES.items() if target in PWSH_DELETERS
+}
+
+# Remove-Item 也用于删别名、环境变量、注册表项，那些不是文件删除。
+# provider 前缀是唯一能从命令行本身看出这一点的依据。
+NON_FILESYSTEM_DRIVE = re.compile(r"^(alias|env|function|variable|cert|wsman|hk[a-z]{2}):", re.I)
+
+# .NET 的删除是表达式而非命令，命令词的判定在这里不适用，只能按文本匹配 ——
+# 这是本文件里唯一一处正则判定，因为它匹配的本来就不是命令。
+DOTNET_DELETE = re.compile(r"::\s*Delete\w*\s*\(|\.Delete\s*\(")
+
+# 回收站删除也走 [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile，
+# 即 trash 自身的实现。不认这个标记就会把推荐的替代方案一起拒掉。
+RECYCLE_MARKER = "SendToRecycleBin"
 
 # 在工作区存在未提交改动时会将其丢弃的 git 子命令。
 RISKY_GIT = frozenset({
@@ -174,6 +199,8 @@ def check_deletes(commands: list[Command], raw: str) -> None:
     trash = trash_command()
 
     for cmd in commands:
+        if cmd.shell != "posix":
+            continue
         if cmd.name in DELETERS:
             if cmd.escalates:
                 deny(
@@ -206,6 +233,44 @@ def check_deletes(commands: list[Command], raw: str) -> None:
                             f"改用 `find ... {flag} {trash} {{}} +`。\n"
                             f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
                         )
+
+
+def check_deletes_powershell(commands: list, raw: str) -> None:
+    """PowerShell 侧没有替身可依赖，所有文件删除一律拒绝。"""
+    if ESCAPE_HATCH in raw:
+        return
+
+    for cmd in commands:
+        if cmd.shell != "powershell" or cmd.name not in PWSH_DELETERS:
+            continue
+        if _targets_non_filesystem_provider(cmd.args):
+            continue
+        deny(
+            f"`{cmd.word}` 在 PowerShell 里解析到 Remove-Item，永久删除，不进回收站。\n"
+            f"rm/del/ri/rd/erase 都是它的内建别名，别名解析先于 PATH 查找，"
+            f"~/.claude/shim/rm 在这里没有介入的机会。\n"
+            f"改用 `trash <路径>`（~/.local/bin/trash.ps1，送进 Windows 回收站）。\n"
+            f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
+        )
+
+    if DOTNET_DELETE.search(raw) and RECYCLE_MARKER not in raw:
+        deny(
+            "命令里有 .NET 的删除调用（::Delete… 或 .Delete()），绕过一切命令级门控，"
+            "删除不可恢复。\n"
+            "改用 `trash <路径>`；确需直接调 .NET 时，用 "
+            "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(路径, "
+            "'OnlyErrorDialogs', 'SendToRecycleBin') 走回收站。\n"
+            f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
+        )
+
+
+def _targets_non_filesystem_provider(args: list[str]) -> bool:
+    """Remove-Item 的目标是否全部落在非文件系统 provider 上（Alias:、Env:、HKCU: 等）。
+
+    目标为变量时无从判断，按最保守处理，返回 False。
+    """
+    targets = [a for a in args if not a.startswith("-")]
+    return bool(targets) and all(NON_FILESYSTEM_DRIVE.match(t) for t in targets)
 
 
 # --------------------------------------------------------------------------
@@ -336,15 +401,23 @@ def main() -> None:
     if not raw.strip():
         sys.exit(0)
 
+    powershell = payload.get("tool_name") == "PowerShell"
+    parse = pwshcmds.executed_commands if powershell else shellcmds.executed_commands
+
     try:
-        commands = executed_commands(raw)
+        commands = parse(raw)
     except ParseError:
         # 无法切分时不具备判断依据。仅对明显含删除词的命令保守拒绝，其余放行，
         # 避免一处引号问题阻塞整个会话。
-        if any(word in raw.split() for word in DELETERS):
+        suspicious = PWSH_DELETE_WORDS if powershell else DELETERS
+        if any(word.lower() in suspicious for word in raw.split()):
             deny("命令中的引号无法配平，无法解析出实际执行的程序，也就无法判断是否涉及删除。请拆分为多条命令。")
         sys.exit(0)
 
+    if powershell:
+        check_deletes_powershell(commands, raw)
+    # POSIX 命令不论从哪个工具进来都适用替身策略：PowerShell 里的 bash 是 WSL 的
+    # bash，那侧装着同一套替身。两个检查各自按 cmd.shell 过滤，可以都跑。
     check_deletes(commands, raw)
     check_installs(commands, raw)
     check_git(commands, payload.get("cwd") or os.getcwd())

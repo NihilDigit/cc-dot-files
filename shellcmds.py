@@ -46,6 +46,12 @@ class Command(NamedTuple):
         """经由 sudo 一类提权执行，PATH 会被换成 secure_path。"""
         return bool({"sudo", "doas", "pkexec", "run0"} & set(self.prefixes))
 
+    @property
+    def shell(self) -> str:
+        """哪种 shell 语义。PowerShell 命令里嵌的 bash -c 会同时产出两种，
+        删除策略不同（这边有 PATH 替身兜底，那边没有），必须能分辨。"""
+        return "posix"
+
 # 命令之间的分隔符。shlex(punctuation_chars=True) 会把连续标点聚成一个 token，
 # 所以 && || |& ;; 都是单个词。
 SEPARATORS = frozenset({";", ";;", "&&", "||", "|", "|&", "&", "(", ")", "{", "}"})

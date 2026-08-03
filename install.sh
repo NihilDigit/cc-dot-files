@@ -57,12 +57,19 @@ link() {
 COPIED=0
 
 link guard-edit.py  hooks/guard-edit.py
-link guard-bash.py  hooks/guard-bash.py
+link guard-shell.py hooks/guard-shell.py
 link shellcmds.py   hooks/lib/shellcmds.py
+link pwshcmds.py    hooks/lib/pwshcmds.py
 link rm.sh          shim/rm
 link CLAUDE.md      CLAUDE.md
 
-chmod +x "$SRC/rm.sh" "$SRC/guard-bash.py" "$SRC/guard-edit.py"
+chmod +x "$SRC/rm.sh" "$SRC/guard-shell.py" "$SRC/guard-edit.py"
+
+# guard-bash.py 改名为 guard-shell.py（它现在也管 PowerShell）。旧副本不会再被
+# settings.json 引用，但留着会让人以为规则还在那边，故明确报出来由你处置。
+if [ -e "$DEST/hooks/guard-bash.py" ]; then
+    echo "残留    hooks/guard-bash.py（已更名为 guard-shell.py，此文件不再被引用，可删）" >&2
+fi
 
 # CLAUDE.md 末尾导入 @LOCAL.md，本机特定信息放在那里，不进本仓库。
 # 先建一个空壳，免得导入指向不存在的文件。
@@ -124,6 +131,10 @@ echo "还需手动完成一步，把 settings.hooks.json 的 hooks 字段合并�
 echo
 echo "安装后需实测确认：在 Claude Code 中执行 command -v rm，"
 echo "结果应为上面那个替身入口的路径。若为 $REAL_DIR/rm，说明未生效。"
+echo
+echo "PowerShell 工具不靠替身：rm 是 Remove-Item 的别名，替身没有介入的机会，"
+echo "hook 直接拒绝删除。那边需要一个 PowerShell 能解析的 trash（如 trash.ps1），"
+echo "否则拒绝之后没有可用的替代命令。用 Get-Command trash 确认。"
 echo
 if [ "$COPIED" = 1 ]; then
     echo "本次为拷贝安装。要改规则请改本仓库再重跑 install.sh，不要直接改 $DEST 下的副本。" >&2
