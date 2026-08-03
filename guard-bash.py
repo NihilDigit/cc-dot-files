@@ -57,6 +57,21 @@ PIPS = frozenset({"pip", "pip3"})
 PYTHON = re.compile(r"^python[0-9.]*$")
 
 
+def _on_path(name: str) -> bool:
+    """PATH 中是否存在该命令。
+
+    不能只靠 shutil.which：Windows 上它按 PATHEXT 匹配，找不到无扩展名的文件，
+    而 Git Bash 下的 trash 正是一个无扩展名的 shell 脚本。
+
+    """
+    if shutil.which(name):
+        return True
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if directory and os.path.isfile(os.path.join(directory, name)):
+            return True
+    return False
+
+
 def trash_command() -> str:
     """本机的回收站命令。Linux 是 trash-cli 的 trash-put，Git Bash 下通常只有 trash。
 
@@ -64,7 +79,7 @@ def trash_command() -> str:
 
     """
     for name in ("trash-put", "trash"):
-        if shutil.which(name):
+        if _on_path(name):
             return name
     return "trash-put"
 
