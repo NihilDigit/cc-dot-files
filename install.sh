@@ -24,6 +24,18 @@ link() {
         echo "已就位  $2"
         return
     fi
+    # 拷贝安装的平台（Git Bash）上目标是副本，不会随仓库自动更新。内容有差异
+    # 时刷新，否则重跑 install.sh 之后仍在静默运行旧规则。
+    if [ -f "$dst" ] && [ ! -L "$dst" ]; then
+        if cmp -s "$src" "$dst"; then
+            echo "已就位  $2"
+        else
+            cp "$src" "$dst"
+            echo "已更新  $2（副本与仓库不一致，已刷新）"
+        fi
+        return
+    fi
+
     if [ -e "$dst" ] || [ -L "$dst" ]; then
         echo "已存在  $2（跳过，需要替换请自行移走）" >&2
         return
