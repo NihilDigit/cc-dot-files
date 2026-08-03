@@ -48,10 +48,36 @@ if [ ! -e "$DEST/LOCAL.md" ]; then
     echo "已创建  LOCAL.md（空壳，本机信息写在这里）"
 fi
 
+# PATH 片段。不写进 shell rc：Claude Code 的 Bash 工具是非交互非登录 shell，
+# 既不读 .bashrc 也不读 .profile，写在那里替身不会进入 PATH。失效过程没有征兆，
+# 而 guard-bash.py 有意放行普通 rm，前提正是替身已就位。
+# bash 对非交互 shell 会读 $BASH_ENV，故改由它载入。
+FRAGMENT="${XDG_CONFIG_HOME:-$HOME/.config}/shell/path.sh"
+
+if [ ! -e "$FRAGMENT" ]; then
+    mkdir -p "$(dirname "$FRAGMENT")"
+    cat > "$FRAGMENT" <<EOF
+# 由 ~/.claude/settings.json 的 env.BASH_ENV 载入。
+# 也可从自己的 shell rc 中 source，两者不冲突。
+case ":\$PATH:" in
+    *":$DEST/shim:"*) ;;
+    *) PATH="$DEST/shim:\$PATH" ;;
+esac
+export PATH
+EOF
+    echo "已创建  ${FRAGMENT#"$HOME/"}（PATH 片段）"
+else
+    grep -qF "$DEST/shim" "$FRAGMENT" \
+        || echo "注意：$FRAGMENT 已存在但未前置 $DEST/shim，请自行加入" >&2
+fi
+
 echo
-echo "还需手动完成两步："
-echo "  1. 把 settings.hooks.json 的 hooks 字段合并进 $DEST/settings.json"
-echo "  2. 在 ~/.bashrc 和 ~/.zshrc 中前置 PATH："
-echo "     export PATH=\"$DEST/shim:\$PATH\""
+echo "还需手动完成一步，把下面两个字段合并进 $DEST/settings.json："
+echo
+echo '  "env": { "BASH_ENV": "'"$FRAGMENT"'" },'
+echo "  \"hooks\": …（取自 settings.hooks.json）"
+echo
+echo "安装后需实测确认：在 Claude Code 中执行 command -v rm，"
+echo "结果应为 $DEST/shim/rm。"
 echo
 command -v trash-put >/dev/null 2>&1 || echo "警告：未找到 trash-put，请先安装 trash-cli，否则 rm 会直接拒绝执行" >&2

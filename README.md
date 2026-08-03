@@ -1,8 +1,8 @@
 # Claude Code 硬门控
 
-三个 PreToolUse hook 加一个 PATH 替身，把三条约束变成 Claude Code 绕不过去的机制：改文件前必有备份、删除一律进回收站、破坏性 git 命令执行前必有快照。这些规则由 hook 强制执行，不依赖模型自觉，也不依赖 CLAUDE.md 里写没写。
+两个 PreToolUse hook 加一个 PATH 替身，把四条约束变成 Claude Code 绕不过去的机制：改文件前必有备份、删除一律进回收站、破坏性 git 命令执行前必有快照、全局安装一律拒绝。这些规则由 hook 强制执行，不依赖模型自觉，也不依赖 CLAUDE.md 里写没写。
 
-## 三条规则
+## 四条规则
 
 **改文件前留备份**。`guard-edit.py` 在 Edit、Write、NotebookEdit 前检查目标是否被 git 跟踪。已跟踪的直接放行，出错可用 `git diff` 恢复；未跟踪的先复制一份 `<文件名>.<时间戳>.bak`。内容与最新备份一致时跳过，同一秒内重名时向后编号。软链会先解析到真实路径再判断，因此软链进 dotfiles 仓库的配置文件不会重复留备份。
 
@@ -15,6 +15,10 @@
 **git 破坏性命令前快照**。工作区存在未提交改动时，`reset`、`checkout`、`restore`、`clean`、`rebase`、`merge`、`switch`、`cherry-pick`、`revert`、`am` 执行前先生成快照：已跟踪的改动由 `git stash create` 写入 `refs/claude-autobak/<时间戳>`，未跟踪文件打包至 `~/.claude/backups/git-autobak/`。`stash drop|clear|pop` 前将现有 stash 记录到独立 ref。
 
 用 `git stash create` 而非 `git stash push`：前者只生成一个提交对象，不修改工作区和索引，失败时也不会改变现场。代价是它不含未跟踪文件，因此未跟踪文件单独打包，`git clean` 针对的正是这部分。
+
+**拒绝全局安装**。`npm`/`pnpm` 带 `-g`、`yarn global add`、`pip install`、`python -m pip install` 由 `guard-bash.py` 拒绝，提示改用 `deno x`／`uvx` 一次性执行，或 `npm add`／`uv add`／`pixi add` 装到项目本地。全局安装落在机器级目录，不随项目走，版本也无法在仓库里声明。
+
+逃生口是 `CLAUDE_ALLOW_GLOBAL_INSTALL=1` 前缀，与删除的逃生口相互独立。
 
 ## rm 的判定不用正则
 
@@ -49,14 +53,26 @@ sh -c 'cd /tmp && rm -rf junk'       # -c 的参数递归展开
 sh install.sh
 ```
 
-脚本把文件软链到 `~/.claude/` 下的对应位置，不覆盖已存在的文件。之后还有两步需要手动完成：
+脚本把文件软链到 `~/.claude/` 下的对应位置，不覆盖已存在的文件。之后把 `settings.hooks.json` 的 `hooks` 和 `env` 两个字段合并进 `~/.claude/settings.json`，其中 `env.BASH_ENV` 要改成本机的绝对路径。
 
-1. 把 `settings.hooks.json` 的 `hooks` 字段合并进 `~/.claude/settings.json`
-2. 在 shell rc 中前置 PATH，`~/.bashrc` 和 `~/.zshrc` 都要写
+## PATH 替身为什么走 BASH_ENV 而不是 shell rc
+
+写进 `~/.bashrc` 或 `~/.zshrc` 不生效。Claude Code 的 Bash 工具起的是非交互非登录 shell（`$-` 为 `hBc`，`shopt login_shell` 为 off），bash 在这种模式下既不读 `.bashrc` 也不读 `.profile`，替身不会进入 PATH。
+
+失效过程没有任何征兆。`guard-bash.py` 只拦 `/bin/rm`、`sudo rm`、`find -delete` 三种绕过写法，普通的 `rm -rf x` 交由替身接管，因此被有意放行。替身不在 PATH 中时，这条命令解析到真正的 `rm`，删除不可恢复，执行过程中不报错。
+
+bash 对非交互 shell 会读 `$BASH_ENV` 指向的文件。因此把它设在 `~/.claude/settings.json` 的 `env` 里，指向一个前置 PATH 的片段：
 
 ```sh
-export PATH="$HOME/.claude/shim:$PATH"
+# ~/.config/shell/path.sh
+case ":$PATH:" in
+    *":$HOME/.claude/shim:"*) ;;
+    *) PATH="$HOME/.claude/shim:$PATH" ;;
+esac
+export PATH
 ```
+
+安装后需实测确认，不能只检查配置文件。在 Claude Code 中执行 `command -v rm`，结果应为 `~/.claude/shim/rm`；若为 `/usr/bin/rm`，说明替身未生效。
 
 ## 文件对应
 

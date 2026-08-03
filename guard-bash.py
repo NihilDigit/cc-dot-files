@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -41,6 +42,19 @@ GIT_GLOBAL_OPTS_WITH_ARG = frozenset({"-C", "-c", "--git-dir", "--work-tree", "-
 BACKUP_DIR = Path.home() / ".claude" / "backups" / "git-autobak"
 ESCAPE_HATCH = "CLAUDE_ALLOW_RM"
 
+# 全局安装写机器级状态，不随项目走，且版本无法在仓库里声明。改用一次性运行器
+# （deno x、uvx）或项目本地依赖。
+INSTALL_ESCAPE_HATCH = "CLAUDE_ALLOW_GLOBAL_INSTALL"
+
+GLOBAL_FLAGS = frozenset({"-g", "--global"})
+
+# 装包子命令。npm/pnpm 用 -g 才算全局，yarn 是 `yarn global add`。
+NODE_INSTALLERS = frozenset({"npm", "pnpm"})
+NODE_INSTALL_SUBCOMMANDS = frozenset({"install", "i", "add"})
+
+PIPS = frozenset({"pip", "pip3"})
+PYTHON = re.compile(r"^python[0-9.]*$")
+
 
 def deny(reason: str) -> None:
     json.dump({
@@ -62,6 +76,63 @@ def notify(message: str) -> None:
         },
     }, sys.stdout)
     sys.exit(0)
+
+
+# --------------------------------------------------------------------------
+# 全局安装门控
+# --------------------------------------------------------------------------
+
+def check_installs(commands: list[Command], raw: str) -> None:
+    """拦全局安装。
+
+    判定同样基于命令词而非正则，因此 `docker exec c1 npm i -g x` 不会命中：
+    那条命令的命令词是 docker，安装发生在容器里。
+
+    """
+    if INSTALL_ESCAPE_HATCH in raw:
+        return
+
+    for cmd in commands:
+        name, args = cmd.name, cmd.args
+
+        if name in NODE_INSTALLERS:
+            # `npm i -g x` 与 `npm -g i x` 都算，故不假定子命令在首位。
+            if NODE_INSTALL_SUBCOMMANDS & set(args) and GLOBAL_FLAGS & set(args):
+                deny(
+                    f"`{name}` 全局安装被禁止：落在机器级目录，不随项目走，"
+                    f"版本也无法在仓库里声明。\n"
+                    f"一次性执行用 `deno x <tool>`；项目依赖用 `{name} add <pkg>` 装到本地。\n"
+                    f"确需全局安装时，加 {INSTALL_ESCAPE_HATCH}=1 前缀。"
+                )
+
+        elif name == "yarn":
+            if len(args) >= 2 and args[0] == "global" and args[1] == "add":
+                deny(
+                    "`yarn global add` 被禁止：装到机器级目录，不随项目走。\n"
+                    "一次性执行用 `deno x <tool>`；项目依赖用 `yarn add <pkg>`。\n"
+                    f"确需全局安装时，加 {INSTALL_ESCAPE_HATCH}=1 前缀。"
+                )
+
+        elif name in PIPS:
+            if "install" in args:
+                deny(
+                    f"`{name} install` 被禁止：装进当前解释器，容易污染系统 Python，"
+                    f"且依赖不随项目走。\n"
+                    f"一次性执行用 `uvx <tool>`；带额外依赖跑脚本用 `uv run --with <pkg>`；"
+                    f"项目依赖用 `uv add <pkg>`。\n"
+                    f"确需如此时，加 {INSTALL_ESCAPE_HATCH}=1 前缀。"
+                )
+
+        elif PYTHON.match(name):
+            # python -m pip install ...
+            if "-m" in args:
+                i = args.index("-m")
+                if i + 1 < len(args) and args[i + 1] == "pip" and "install" in args[i + 1:]:
+                    deny(
+                        f"`{name} -m pip install` 被禁止，理由同 `pip install`。\n"
+                        f"改用 `uvx <tool>`、`uv run --with <pkg>` 或 `uv add <pkg>`。\n"
+                        f"确需如此时，加 {INSTALL_ESCAPE_HATCH}=1 前缀。"
+                    )
 
 
 # --------------------------------------------------------------------------
@@ -246,6 +317,7 @@ def main() -> None:
         sys.exit(0)
 
     check_deletes(commands, raw)
+    check_installs(commands, raw)
     check_git(commands, payload.get("cwd") or os.getcwd())
     sys.exit(0)
 

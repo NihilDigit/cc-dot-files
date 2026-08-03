@@ -36,6 +36,12 @@
 
 快照不构成执行破坏性命令的理由。工作区存在未提交改动时，先说明将丢失哪些内容及原因，再执行。
 
+**装包**。全局安装被拒绝：落在机器级目录，不随项目走，版本也无法在仓库里声明。`npm`/`pnpm` 带 `-g`、`yarn global add`、`pip install`、`python -m pip install` 都在此列。
+
+一次性执行工具用 `deno x <tool>`（Python 侧用 `uvx <tool>`）；脚本临时依赖用 `uv run --with <pkg>`；项目依赖装到本地，用 `npm add`、`uv add`、`pixi add`。
+
+确需全局安装时加 `CLAUDE_ALLOW_GLOBAL_INSTALL=1` 前缀，并事先向我确认。同样由词法切分判定，`docker exec c1 npm i -g x` 不受影响，安装发生在容器里。
+
 ## PR
 
 走 fork：`origin` 是 fork，`upstream` 是上游，`remote.pushDefault` 设为 `origin`。从上游默认分支拉新分支，`git push -u origin <分支>`，再 `gh pr create --draft`。默认 draft，由我转 ready for review。
