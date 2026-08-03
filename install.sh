@@ -30,8 +30,19 @@ link() {
     fi
 
     ln -s "$src" "$dst"
-    echo "已软链  $2 -> $1"
+
+    # Git Bash 在 MSYS 未设 winsymlinks 时，ln -s 会静默拷贝而非建链。
+    # 拷贝同样能用，但在 ~/.claude/ 下的改动不会回流到仓库，两端会无声分叉，
+    # 因此明确报出来。
+    if [ -L "$dst" ]; then
+        echo "已软链  $2 -> $1"
+    else
+        echo "已拷贝  $2 -> $1（本平台不支持软链，改动不会回流到仓库）" >&2
+        COPIED=1
+    fi
 }
+
+COPIED=0
 
 link guard-edit.py  hooks/guard-edit.py
 link guard-bash.py  hooks/guard-bash.py
@@ -80,4 +91,11 @@ echo
 echo "安装后需实测确认：在 Claude Code 中执行 command -v rm，"
 echo "结果应为 $DEST/shim/rm。"
 echo
-command -v trash-put >/dev/null 2>&1 || echo "警告：未找到 trash-put，请先安装 trash-cli，否则 rm 会直接拒绝执行" >&2
+if [ "$COPIED" = 1 ]; then
+    echo "本次为拷贝安装。要改规则请改本仓库再重跑 install.sh，不要直接改 $DEST 下的副本。" >&2
+    echo "Git Bash 下可设 MSYS=winsymlinks:nativestrict 启用真软链，需开启开发者模式。" >&2
+    echo
+fi
+
+command -v trash-put >/dev/null 2>&1 || command -v trash >/dev/null 2>&1 \
+    || echo "警告：未找到 trash-put 或 trash，rm 替身会直接拒绝执行。Linux 装 trash-cli；Windows 需自备封装回收站的 trash" >&2

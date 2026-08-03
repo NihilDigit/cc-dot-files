@@ -74,6 +74,18 @@ export PATH
 
 安装后需实测确认，不能只检查配置文件。在 Claude Code 中执行 `command -v rm`，结果应为 `~/.claude/shim/rm`；若为 `/usr/bin/rm`，说明替身未生效。
 
+## Windows（Git Bash）
+
+Claude Code 在 Windows 上把 Bash 工具跑在 Git Bash 里，与 Linux 原生环境有三处差异，已在本仓库内处理：
+
+`ln -s` 在 `MSYS` 未设 `winsymlinks` 时静默拷贝而非建链。`install.sh` 会检出这一点并明确报告；此时 `~/.claude/` 下是副本，改规则要改仓库再重跑，否则两端无声分叉。开启开发者模式后可设 `MSYS=winsymlinks:nativestrict` 得到真软链。
+
+Git for Windows 默认 `core.autocrlf=true`，会把 `rm.sh` 检出成 CRLF，shebang 变为 `#!/bin/sh\r`，替身无法执行。仓库根目录的 `.gitattributes` 强制以 LF 检出。
+
+Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一个把参数送进 Windows 回收站的同名脚本。
+
+`/usr/bin/rm`、GNU tar 的 `--null -T -`、Python 3.10+ 在 Git Bash 中均可用，无需适配。
+
 ## 文件对应
 
 | 本仓库 | 本机路径 |

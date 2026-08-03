@@ -1,0 +1,5 @@
+# 本仓库全是脚本，一律以 LF 检出。
+#
+# Git for Windows 默认 core.autocrlf=true，会把 rm.sh 检出成 CRLF，
+# shebang 变成 `#!/bin/sh\r`，PATH 替身直接无法执行。
+* text=auto eol=lf
