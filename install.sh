@@ -24,6 +24,14 @@ link() {
         echo "已就位  $2"
         return
     fi
+    # 仓库改名或移动后旧软链指向不存在的路径。这种 dst 作为链接存在、却解析不到，
+    # 会落进下面的「已存在，跳过」分支：安装报成功，门控实际不生效。悬空的一律重指，
+    # 指向别处但能解析的仍然跳过，那可能是有意的配置。
+    if [ -L "$dst" ] && [ ! -e "$dst" ]; then
+        ln -sfn "$src" "$dst"
+        echo "已重指  $2 -> $1（原软链悬空）"
+        return
+    fi
     # 拷贝安装的平台（Git Bash）上目标是副本，不会随仓库自动更新。内容有差异
     # 时刷新，否则重跑 install.sh 之后仍在静默运行旧规则。
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
@@ -113,7 +121,7 @@ done
 IFS=$OLD_IFS
 
 write_forwarder() {
-    printf '#!/bin/sh\n# 由 claude-hardgate 的 install.sh 生成。实现在 %s/shim/rm。\nexec "%s/shim/rm" "$@"\n' \
+    printf '#!/bin/sh\n# 由 cc-dot-files 的 install.sh 生成。实现在 %s/shim/rm。\nexec "%s/shim/rm" "$@"\n' \
         "$DEST" "$DEST" > "$1"
     chmod +x "$1"
 }
