@@ -62,6 +62,7 @@ link shellcmds.py   hooks/lib/shellcmds.py
 link pwshcmds.py    hooks/lib/pwshcmds.py
 link rm.sh          shim/rm
 link CLAUDE.md      CLAUDE.md
+link statusline.py  statusline.py
 
 chmod +x "$SRC/rm.sh" "$SRC/guard-shell.py" "$SRC/guard-edit.py"
 
@@ -126,8 +127,53 @@ else
     echo "    sudo sh -c 'printf \"#!/bin/sh\\nexec \\\"$DEST/shim/rm\\\" \\\"\\\$@\\\"\\n\" > /usr/local/bin/rm && chmod +x /usr/local/bin/rm'" >&2
 fi
 
-echo
-echo "还需手动完成一步，把 settings.hooks.json 的 hooks 字段合并进 $DEST/settings.json。"
+# settings.json 只合并 hooks 一个键，不整文件覆盖：同一个文件里 hooks 是跨机器
+# 共享的，model、statusLine、tui 之类是本机口味，整文件同步会把后者一起冲掉。
+#
+# 合并时把模板里的 ~/.claude 展开成 $DEST 的实际路径。hook command 由哪个 shell
+# 执行没有保证，波浪号能否展开不可依赖；展开之后本机路径也不必写进仓库。
+#
+# Git Bash 下 $DEST 以 /c/... 传入，MSYS 会在交给原生 Windows python 时转成
+# C:/...，写进 settings.json 的正是转换后的形式。这是对的：跑 hook 的也是同一个
+# Windows python，它读不了 /c/... 这种路径。
+python3 - "$SRC/settings.hooks.json" "$DEST" <<'PY'
+import json
+import os
+import sys
+import time
+
+template_path, dest = sys.argv[1], sys.argv[2]
+settings_path = os.path.join(dest, "settings.json")
+
+with open(template_path, encoding="utf-8") as fh:
+    hooks = json.load(fh)["hooks"]
+
+hooks = json.loads(json.dumps(hooks).replace("~/.claude", dest))
+
+try:
+    with open(settings_path, encoding="utf-8") as fh:
+        settings = json.load(fh)
+except FileNotFoundError:
+    settings = {}
+except ValueError as exc:
+    sys.exit(f"{settings_path} 不是合法 JSON（{exc}），已跳过 hooks 合并，请先修复")
+
+if settings.get("hooks") == hooks:
+    print("已就位  settings.json 的 hooks")
+    sys.exit()
+
+if os.path.exists(settings_path):
+    backup = f"{settings_path}.{time.strftime('%Y%m%d-%H%M%S')}.bak"
+    with open(backup, "w", encoding="utf-8") as fh:
+        json.dump(settings, fh, ensure_ascii=False, indent=2)
+    print(f"已备份  {os.path.basename(backup)}")
+
+settings["hooks"] = hooks
+with open(settings_path, "w", encoding="utf-8") as fh:
+    json.dump(settings, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+print("已更新  settings.json 的 hooks（其余键原样保留）")
+PY
 echo
 echo "安装后需实测确认：在 Claude Code 中执行 command -v rm，"
 echo "结果应为上面那个替身入口的路径。若为 $REAL_DIR/rm，说明未生效。"

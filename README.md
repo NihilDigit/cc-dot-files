@@ -1,6 +1,8 @@
-# Claude Code 硬门控
+# cc-dot-files
 
-两个 PreToolUse hook 加一个 PATH 替身，把四条约束变成 Claude Code 绕不过去的机制：改文件前必有备份、删除一律进回收站、破坏性 git 命令执行前必有快照、全局安装一律拒绝。这些规则由 hook 强制执行，不依赖模型自觉，也不依赖 CLAUDE.md 里写没写。
+Claude Code 的配置：全局 `CLAUDE.md`、statusline，以及一套硬门控。
+
+硬门控是两个 PreToolUse hook 加一个 PATH 替身，把四条约束变成 Claude Code 绕不过去的机制：改文件前必有备份、删除一律进回收站、破坏性 git 命令执行前必有快照、全局安装一律拒绝。这些规则由 hook 强制执行，不依赖模型自觉，也不依赖 CLAUDE.md 里写没写。
 
 ## 四条规则
 
@@ -71,7 +73,9 @@ sh -c 'cd /tmp && rm -rf junk'       # -c 的参数递归展开
 sh install.sh
 ```
 
-脚本把文件软链到 `~/.claude/` 下的对应位置，不覆盖已存在的文件，并在 PATH 中安装替身入口（见下节）。之后把 `settings.hooks.json` 的 `hooks` 字段合并进 `~/.claude/settings.json`。
+脚本把文件软链到 `~/.claude/` 下的对应位置，不覆盖已存在的文件，并在 PATH 中安装替身入口（见下节）。
+
+`settings.json` 只合并 `hooks` 一个键，其余原样保留：同一个文件里 `hooks` 是跨机器共享的，`model`、`statusLine`、`tui` 之类是本机口味，整文件同步会把后者一起冲掉。合并前先备份成 `settings.json.<时间戳>.bak`。模板里的 `~/.claude` 在合并时展开成实际路径 —— hook command 由哪个 shell 执行没有保证，波浪号能否展开不可依赖。
 
 ## 替身入口放在哪
 
@@ -99,6 +103,18 @@ Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一�
 
 `/usr/bin/rm`、GNU tar 的 `--null -T -`、Python 3.10+ 在 Git Bash 中均可用，无需适配。
 
+## statusline
+
+`statusline.py` 输出「目录 · 分支 · 模型 · 上下文占比 · 5h 配额」，需在 `settings.json` 里自行指向：
+
+```json
+"statusLine": { "type": "command", "command": "python3 \"$HOME/.claude/statusline.py\"" }
+```
+
+上下文条的分母取 `settings.json` 的 `autoCompactWindow` 而非模型真实窗口。两者可以差一倍，按真实窗口画的话，压缩迫在眉睫时条子才走到一半，这个数就失去了决策价值。
+
+出错时打印一行红字而不是留空：statusline 静默失效和「没配置」在界面上长得一样，会被当成配置没生效而去改 `settings.json`，查错方向从一开始就是偏的。
+
 ## 文件对应
 
 | 本仓库 | 本机路径 |
@@ -109,7 +125,8 @@ Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一�
 | `pwshcmds.py` | `~/.claude/hooks/lib/pwshcmds.py` |
 | `rm.sh` | `~/.claude/shim/rm` |
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` |
-| `settings.hooks.json` | 合并进 `~/.claude/settings.json` |
+| `statusline.py` | `~/.claude/statusline.py` |
+| `settings.hooks.json` | 合并进 `~/.claude/settings.json` 的 `hooks` 键 |
 
 `CLAUDE.md` 末尾导入 `@LOCAL.md`，本机特定的环境信息放在那里，不进本仓库。
 
