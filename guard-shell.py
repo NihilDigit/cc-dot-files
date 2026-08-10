@@ -48,7 +48,7 @@ PWSH_DELETE_WORDS = PWSH_DELETERS | {
 # provider 前缀是唯一能从命令行本身看出这一点的依据。
 NON_FILESYSTEM_DRIVE = re.compile(r"^(alias|env|function|variable|cert|wsman|hk[a-z]{2}):", re.I)
 
-# .NET 的删除是表达式而非命令，命令词的判定在这里不适用，只能按文本匹配 ——
+# .NET 的删除是表达式而非命令，命令词的判定在这里不适用，只能按文本匹配。
 # 这是本文件里唯一一处正则判定，因为它匹配的本来就不是命令。
 DOTNET_DELETE = re.compile(r"::\s*Delete\w*\s*\(|\.Delete\s*\(")
 

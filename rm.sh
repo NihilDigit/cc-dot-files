@@ -3,7 +3,7 @@
 #
 # 位于 PATH 最前，脚本、Makefile 和交互 shell 中的 rm 都会解析到此处。
 # 能绕过它的只有三种写法：/bin/rm、sudo rm、find -delete，
-# 由 ~/.claude/hooks/guard-bash.py 拦截。
+# 由 ~/.claude/hooks/guard-shell.py 拦截。
 #
 # 必须保留的两项 rm 语义，否则安装脚本和 Makefile 会失败：
 #   * rm -f 对不存在的路径静默成功
