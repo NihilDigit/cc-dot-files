@@ -10,11 +10,27 @@
 
 结构正确优先于 diff 小，但不夹带无关改动。写法以易读为先，宁可多一个具名变量或小函数。
 
+改已存在的文件用 Edit，不要用内联 python 做 read-replace-write。`s.replace(a, b)` 在 a 匹配不上时静默返回原文并照常写盘，改了和没改无法区分；Edit 在同样情况下直接失败。这条同样约束派出去的 subagent，派发时写进 prompt。图像处理、二进制解析、跨几十个文件的批量替换用 python 是对的。
+
 注释和测试只在给出代码本身读不到的信息时才有价值，两者都宁可少写。注释写为什么选这个方案、哪条路走不通、哪里违反直觉；测试要能抓到问题，不把刚写下的逻辑再断言一遍。
+
+注释不用 Markdown 语法，IDE 不渲染，`**` 会原样显示。命名一个真实被否决的方案正是注释的价值，「按 oid 取，不是 bvid」要留；为衬托而设的对立面删掉。
 
 优先冒烟测试：真实跑一遍，看端到端行为和可观察的副作用，改动琐碎时本机冒烟一次即可。要进 CI 的另外判断，按干净机器设想：没有外设、网络受限、路径与并发顺序不同、不留本地状态；依赖本机环境的就说明只在本机跑。
 
 推送和创建 PR 之前先给我看。
+
+在 Fable 上工作时主动委派 subagent,模型按任务分:通用代码和复杂任务显式传 `model: "opus"`,小任务或持续性的简单任务传 `model: "sonnet"`,不要默认继承 Fable。
+
+并行派 agent 之前先划好文件归属，互不重叠，并在各自的 prompt 里写明边界。agent 只编译自己负责的模块，集成编译由你在收口时统一跑一次。任何一个 agent 写坏一个文件，全项目编译就挂，其他 agent 收到的报错指向的不是自己的改动，会去查错地方或空等。归属和编译范围是你的事，不是它们的。
+
+## 输出模式
+
+除本对话之外的一切文字用统一的书面模式：UI 文案与 strings.xml、README、release note、slogan、仓库 description、commit message、PR 正文、代码注释、设计文档。口语只存在于我和你的对话里。
+
+口语在这些位置有两个代价：观感不严肃，以及冗长。「一直没加载出来」七个字，「未加载」三个字，信息量相同。改写之后更短，是这条是否落实的检验方式。
+
+具体判别样本见 writing-style skill；该 skill 未被调起时这条同样生效。
 
 ## 硬门控
 
@@ -44,11 +60,13 @@
 
 确需全局安装时加 `CLAUDE_ALLOW_GLOBAL_INSTALL=1` 前缀，并事先向我确认。同样由词法切分判定，`docker exec c1 npm i -g x` 不受影响，安装发生在容器里。
 
-## PR
+## 提交与 PR
 
-走 fork：`origin` 是 fork，`upstream` 是上游，`remote.pushDefault` 设为 `origin`。从上游默认分支拉新分支，`git push -u origin <分支>`，再 `gh pr create --draft`。默认 draft，由我转 ready for review。
+**自有仓库不走 PR**。直接在默认分支上提交，不开分支、不建 PR。改动大时按主题拆成多个 commit，不必挤成一个。下面的 commit 写法照旧适用。
 
-一个 PR 一个 commit。标题写作 `type(scope): 英文小写祈使句`，无句号，70 字符内；type 用 `feat`、`fix`、`perf`，scope 沿用仓库已有的。commit headline 与 PR 标题逐字相同。
+**向上游贡献才走 fork 与 PR**：`origin` 是 fork，`upstream` 是上游，`remote.pushDefault` 设为 `origin`。从上游默认分支拉新分支，`git push -u origin <分支>`，再 `gh pr create --draft`。默认 draft，由我转 ready for review。这条路一个 PR 一个 commit。
+
+commit 标题写作 `type(scope): 英文小写祈使句`，无句号，70 字符内；type 用 `feat`、`fix`、`perf`，scope 沿用仓库已有的。走 PR 时 commit headline 与 PR 标题逐字相同。
 
 commit message 正文用英文，手动硬换行 80 列内，不能为空。
 
