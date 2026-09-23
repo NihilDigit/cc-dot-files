@@ -1,14 +1,23 @@
-"""Claude Code statusline: 目录 · 分支 · 模型 · 上下文占比 · 5h 配额。
+"""Claude Code statusline：目录、分支、模型、上下文占比、配额、缓存状态。
 
-上下文条的分母取 settings.json 的 autoCompactWindow 而非模型真实窗口。
-两者可以差一倍（512K vs 1M），按真实窗口画的话，压缩迫在眉睫时条子才走到
-一半，这个数就失去了决策价值。
+配额与缓存按事件刷新：Claude Code 在 resets_at、expires_at 到点时会重跑本脚本，
+两次运行之间屏幕不变。因此重置时间显示为绝对时刻而非倒计时，倒计时在闲置期间
+会停在过时的数上。
 """
 
 import json
 import os
 import subprocess
 import sys
+import time
+
+# 中文 Windows 上 stdout 的默认编码是 cp936，进度条的 ░▓█ 一律 UnicodeEncodeError，
+# 整行 statusline 变成一句报错。Claude Code 按 UTF-8 读子进程输出，这里对齐过去。
+# 不改用 ASCII 字符画条：GBK 装不下的还有分支名、目录名里的任何非 GBK 字符。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass
 
 DIM = "\033[2m"
 YELLOW = "\033[33m"
@@ -18,6 +27,7 @@ RESET = "\033[0m"
 WARN_CTX, CRIT_CTX = 75, 90
 WARN_QUOTA, CRIT_QUOTA = 60, 85
 CELLS = 10
+DAY = 24 * 3600
 
 
 def tone(pct, warn, crit):
@@ -28,45 +38,34 @@ def tone(pct, warn, crit):
     return DIM
 
 
-def compact_window(fallback):
-    """auto-compact 的实际触发点。读 settings 是为了改了阈值之后这里跟着走。"""
-    try:
-        with open(os.path.expanduser("~/.claude/settings.json"), encoding="utf-8") as fh:
-            value = json.load(fh).get("autoCompactWindow")
-        if isinstance(value, int) and value > 0:
-            return value
-    except (OSError, ValueError):
-        pass
-    return fallback
+def git_state(directory):
+    """返回 (分支, 是否有未提交改动)，不在仓库内时返回 None。
 
-
-def branch(workspace):
-    worktree = workspace.get("git_worktree")
-    if worktree:
-        return worktree
-    root = workspace.get("project_dir") or workspace.get("current_dir")
-    if not root:
-        return None
-    # 直接读 HEAD，比起 `git rev-parse` 省掉一次进程启动
-    try:
-        with open(os.path.join(root, ".git", "HEAD"), encoding="utf-8") as fh:
-            head = fh.read().strip()
-    except OSError:
-        return None
-    if head.startswith("ref: refs/heads/"):
-        return head[len("ref: refs/heads/"):]
-    return head[:7] if head else None
-
-
-def dirty(root):
+    一次 status --branch 同时拿到两者。不直接读 .git/HEAD：linked worktree 里
+    .git 是文件，从仓库子目录启动时 .git 不在当前目录，两种情况都读不到。
+    """
     try:
         done = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=root, capture_output=True, text=True, timeout=2,
+            ["git", "status", "--porcelain=v2", "--branch", "--untracked-files=no"],
+            cwd=directory, capture_output=True, text=True, timeout=2,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return bool(done.stdout.strip())
+        return None
+    if done.returncode != 0:
+        return None
+
+    head = oid = None
+    dirty = False
+    for line in done.stdout.splitlines():
+        if line.startswith("# branch.head "):
+            head = line[len("# branch.head "):]
+        elif line.startswith("# branch.oid "):
+            oid = line[len("# branch.oid "):]
+        elif not line.startswith("#"):
+            dirty = True
+    if head == "(detached)":
+        head = oid[:7] if oid and oid != "(initial)" else None
+    return head, dirty
 
 
 def bar(pct):
@@ -74,6 +73,52 @@ def bar(pct):
     full = min(int(units), CELLS)
     half = 1 if (units - full) >= 0.5 and full < CELLS else 0
     return "█" * full + "▓" * half + "░" * (CELLS - full - half)
+
+
+def reset_time(epoch):
+    """24 小时内给时刻，更远给日期。"""
+    local = time.localtime(epoch)
+    if epoch - time.time() < DAY:
+        return time.strftime("%H:%M", local)
+    return f"{local.tm_mon}/{local.tm_mday}"
+
+
+def tokens(count):
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    return f"{round(count / 1000)}k"
+
+
+def quota(windows, key, label, always):
+    """配额段。未到警戒线时 always=False 的窗口不显示，到了才附重置时刻。"""
+    window = windows.get(key) or {}
+    pct = window.get("used_percentage")
+    if not isinstance(pct, (int, float)):
+        return None
+    if not always and pct < WARN_QUOTA:
+        return None
+    text = f"{label} {pct:.0f}%"
+    resets_at = window.get("resets_at")
+    if pct >= WARN_QUOTA and isinstance(resets_at, (int, float)):
+        # ⧖ 只有文本形态；⏱、⌛ 默认按 emoji 渲染，在终端里占两格
+        text += f" ⧖{reset_time(resets_at)}"
+    return f"{tone(pct, WARN_QUOTA, CRIT_QUOTA)}{text}{RESET}"
+
+
+def cold_cache(cache):
+    """缓存已冷时的提示段，数字为下一条消息需重新缓存的 token 数。
+
+    除了 warm 也比对 expires_at：到点重跑时拿到的数据未必已把 warm 置为 false。
+    """
+    if not cache.get("caching_observed"):
+        return None
+    expires_at = cache.get("expires_at")
+    expired = isinstance(expires_at, (int, float)) and expires_at <= time.time()
+    if cache.get("warm") and not expired:
+        return None
+    recache = cache.get("recache_tokens_if_cold")
+    text = f"❄ {tokens(recache)}" if isinstance(recache, int) and recache > 0 else "❄"
+    return f"{YELLOW}{text}{RESET}"
 
 
 def main():
@@ -87,32 +132,33 @@ def main():
 
     parts = []
     workspace = data.get("workspace") or {}
-    root = workspace.get("project_dir") or workspace.get("current_dir") or ""
+    directory = workspace.get("current_dir") or data.get("cwd") or ""
 
-    if root:
-        head = branch(workspace)
-        label = os.path.basename(root.rstrip("/\\")) or root
-        if head:
-            label += f"  {head}{'*' if dirty(root) else ''}"
+    if directory:
+        label = os.path.basename(directory.rstrip("/\\")) or directory
+        state = git_state(directory)
+        if state and state[0]:
+            head, dirty = state
+            label += f"  {head}{'*' if dirty else ''}"
         parts.append(f"{DIM}{label}{RESET}")
 
     model = (data.get("model") or {}).get("display_name")
     if model:
         parts.append(f"{DIM}{model}{RESET}")
 
-    ctx = data.get("context_window") or {}
-    used = ctx.get("total_input_tokens")
-    if isinstance(used, int):
-        limit = compact_window(ctx.get("context_window_size") or 200_000)
-        pct = min(used / limit * 100, 100)
-        color = tone(pct, WARN_CTX, CRIT_CTX)
-        parts.append(f"{color}{bar(pct)} {pct:3.0f}%{RESET}")
+    used = (data.get("context_window") or {}).get("used_percentage")
+    if isinstance(used, (int, float)):
+        pct = min(used, 100)
+        parts.append(f"{tone(pct, WARN_CTX, CRIT_CTX)}{bar(pct)} {pct:3.0f}%{RESET}")
 
-    five_hour = ((data.get("rate_limits") or {}).get("five_hour")) or {}
-    quota = five_hour.get("used_percentage")
-    if isinstance(quota, (int, float)):
-        color = tone(quota, WARN_QUOTA, CRIT_QUOTA)
-        parts.append(f"{color}5h {quota:.0f}%{RESET}")
+    windows = data.get("rate_limits") or {}
+    for segment in (
+        quota(windows, "five_hour", "5h", always=True),
+        quota(windows, "seven_day", "7d", always=False),
+        cold_cache(data.get("prompt_cache") or {}),
+    ):
+        if segment:
+            parts.append(segment)
 
     sys.stdout.write("  ".join(parts))
 

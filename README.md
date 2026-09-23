@@ -6,7 +6,11 @@ Claude Code 的配置：全局 `CLAUDE.md`、statusline，以及一套硬门控�
 
 ## 四条规则
 
-**改文件前留备份**。`guard-edit.py` 在 Edit、Write、NotebookEdit 前检查目标是否被 git 跟踪。已跟踪的直接放行，出错可用 `git diff` 恢复；未跟踪的先复制一份 `<文件名>.<时间戳>.bak`。内容与最新备份一致时跳过，同一秒内重名时向后编号。软链会先解析到真实路径再判断，因此软链进 dotfiles 仓库的配置文件不会重复留备份。
+**改文件前留备份**。`guard-edit.py` 在 Edit、Write、NotebookEdit 前检查目标是否被 git 跟踪。已跟踪的直接放行，出错可用 `git diff` 恢复；未跟踪的先复制一份 `<文件名>.<时间戳>.bak`。
+
+仓库内的备份集中放在仓库根的 `.claude-bak/`，按相对路径存放，并写入 `.git/info/exclude`，不出现在 `git status` 中。不放在原文件旁：Android 的 `res/` 由 aapt2 逐个编译，多一个 `.bak` 即构建失败，集中存放就不必维护一份构建敏感目录的名单。写 `info/exclude` 而非 `.gitignore`，不改动仓库本身。仓库外的文件没有构建与 git 的问题，备份仍放在原文件旁。
+
+内容与最新备份一致时跳过，同一秒内重名时向后编号。软链会先解析到真实路径再判断，因此软链进 dotfiles 仓库的配置文件不会重复留备份。
 
 **删除转回收站**。`shim/rm` 前置在 PATH 中，把 `rm` 转为 `trash-put`，脚本和 Makefile 里的 `rm` 一并覆盖。`rm -f` 对不存在路径静默成功的语义被保留，否则安装脚本会失败。三种绕过替身的写法由 `guard-shell.py` 拒绝：
 
@@ -105,13 +109,19 @@ Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一�
 
 ## statusline
 
-`statusline.py` 输出「目录 · 分支 · 模型 · 上下文占比 · 5h 配额」，需在 `settings.json` 里自行指向：
+`statusline.py` 输出目录、分支、模型、上下文占比、配额与缓存状态，需在 `settings.json` 里自行指向：
 
 ```json
 "statusLine": { "type": "command", "command": "python3 \"$HOME/.claude/statusline.py\"" }
 ```
 
-上下文条的分母取 `settings.json` 的 `autoCompactWindow` 而非模型真实窗口。两者可以差一倍，按真实窗口画的话，压缩迫在眉睫时条子才走到一半，这个数就失去了决策价值。
+上下文条取 Claude Code 给出的 `used_percentage`，分母为模型的上下文窗口。
+
+5h 配额常显；7d 配额达到 60% 才显示。达到 60% 后附重置时刻，24 小时内为 `⧖14:30`，更远为 `⧖9/25`。Claude Code 只在事件发生时重跑 statusline，闲置期间屏幕不变，倒计时会停在过时的数上，绝对时刻则不会。
+
+prompt cache 过期后显示 `❄ 450k`，数字为下一条消息需重新缓存的 token 数，提示此时发消息的成本。Claude Code 在缓存到达 `expires_at` 时会重跑 statusline，无需设 `refreshInterval`。
+
+分支与改动状态由一次 `git status --porcelain=v2 --branch` 取得，不直接读 `.git/HEAD`：linked worktree 里 `.git` 是文件，从仓库子目录启动时当前目录下没有 `.git`，两种情况都读不到。
 
 出错时打印一行红字而不是留空：statusline 静默失效和「没配置」在界面上长得一样，会被当成配置没生效而去改 `settings.json`，查错方向从一开始就是偏的。
 

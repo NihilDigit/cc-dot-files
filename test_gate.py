@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 GUARD = Path(os.environ.get("HARDGATE_GUARD") or Path(__file__).parent / "guard-shell.py").expanduser()
@@ -100,16 +101,54 @@ BASH_CASES = [
 ]
 
 
+def shell_path(path: Path) -> str:
+    """Git Bash 下命令行里写的路径形式：C:\\x 写作 /c/x。"""
+    if os.name != "nt":
+        return path.as_posix()
+    return f"/{path.drive[0].lower()}{path.as_posix()[2:]}"
+
+
+def git_cases(root: Path) -> list[tuple[str, str, str, str]]:
+    """快照要落到命令实际作用的仓库上，而会话 cwd 在仓库外。
+
+    Windows 上跑 hook 的是原生 python，`/c/...` 对它不存在；这组用例抓的正是
+    快照因此被静默跳过的那类问题。返回 (工具, 期望, 命令, cwd)。
+    """
+    repo, outside = root / "repo", root / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    for args in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    (repo / "t.txt").write_text("v1\n")
+    subprocess.run(["git", "-C", str(repo), "add", "t.txt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "commit", "-q", "-m", "t"], check=True, capture_output=True)
+    (repo / "t.txt").write_text("v2\n")  # 未提交改动，hook 不真正执行命令，改动一直在
+
+    posix, native = shell_path(repo), str(repo)
+    return [
+        ("Bash", NOTIFY, f"git -C {posix} reset --hard", str(outside)),
+        ("Bash", NOTIFY, f"cd {posix} && git reset --hard", str(outside)),
+        ("PowerShell", NOTIFY, f"Set-Location '{native}'; git restore t.txt", str(outside)),
+        ("Bash", ALLOW, "git reset --hard", str(outside)),  # cwd 不在仓库内，无从快照
+    ]
+
+
 def main() -> int:
     failures = []
-    for tool, cases in (("PowerShell", POWERSHELL_CASES), ("Bash", BASH_CASES)):
-        for expected, command in cases:
-            actual, message = run(tool, command)
+    cases = [(tool, expected, command, ".")
+             for tool, group in (("PowerShell", POWERSHELL_CASES), ("Bash", BASH_CASES))
+             for expected, command in group]
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        cases += git_cases(Path(tmp))
+        for tool, expected, command, cwd in cases:
+            actual, message = run(tool, command, cwd)
             if actual != expected:
                 failures.append(f"  [{tool}] 期望 {expected}，实得 {actual}: {command}\n"
                                 f"      {message.splitlines()[0] if message else ''}")
 
-    total = len(POWERSHELL_CASES) + len(BASH_CASES)
+    total = len(cases)
     if failures:
         print(f"{len(failures)}/{total} 条不符：")
         print("\n".join(failures))

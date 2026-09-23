@@ -66,6 +66,10 @@ RISKY_GIT = frozenset({
 GIT_GLOBAL_OPTS_WITH_ARG = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"})
 
 BACKUP_DIR = Path.home() / ".claude" / "backups" / "git-autobak"
+
+# 写在通知里而非 CLAUDE.md：模型事先不知道有快照，决策时就无从依赖它；
+# 恢复方式只在快照真正生成时才有意义，随通知送达即可。
+RELAY_TO_USER = "请在回复中向用户转述以上恢复方式。"
 ESCAPE_HATCH = "CLAUDE_ALLOW_RM"
 
 # 全局安装写机器级状态，不随项目走，且版本无法在仓库里声明。改用一次性运行器
@@ -249,7 +253,7 @@ def check_deletes_powershell(commands: list, raw: str) -> None:
             f"`{cmd.word}` 在 PowerShell 里解析到 Remove-Item，永久删除，不进回收站。\n"
             f"rm/del/ri/rd/erase 都是它的内建别名，别名解析先于 PATH 查找，"
             f"~/.claude/shim/rm 在这里没有介入的机会。\n"
-            f"改用 `trash <路径>`（~/.local/bin/trash.ps1，送进 Windows 回收站）。\n"
+            f"改用 `trash <路径>`（送进 Windows 回收站）。\n"
             f"确需不可恢复的删除时，加 {ESCAPE_HATCH}=1 前缀。"
         )
 
@@ -341,7 +345,11 @@ def snapshot_repo(repo: Path, subcommand: str) -> str | None:
 
     if not lines:
         return None
-    return f"工作区存在未提交改动，执行 `git {subcommand}` 前已生成快照：\n" + "\n".join(lines)
+    return (
+        f"工作区存在未提交改动，执行 `git {subcommand}` 前已生成快照：\n"
+        + "\n".join(lines)
+        + f"\n{RELAY_TO_USER}"
+    )
 
 
 def snapshot_stashes(repo: Path) -> str | None:
@@ -359,18 +367,52 @@ def snapshot_stashes(repo: Path) -> str | None:
             saved.append(f"  {line[:80]} → `git stash apply {sha[:12]}`")
     if not saved:
         return None
-    return f"丢弃 stash 前已将 {len(saved)} 条记录至 refs/claude-autobak/：\n" + "\n".join(saved)
+    return (
+        f"丢弃 stash 前已将 {len(saved)} 条记录至 refs/claude-autobak/：\n"
+        + "\n".join(saved)
+        + f"\n{RELAY_TO_USER}"
+    )
+
+
+def resolve_dir(raw: str, base: Path) -> Path:
+    """把命令行里写的目录解析成本进程能访问的路径。
+
+    Windows 上跑 hook 的是原生 python，Git Bash 的 /c/Users/... 在它看来不存在，
+    `git -C /c/...` 因此会被当成无效目录而静默跳过快照。波浪号同理，由 shell
+    展开，hook 拿到的是原文。
+    """
+    expanded = os.path.expanduser(raw)
+    if os.name == "nt":
+        drive = re.match(r"^/([a-zA-Z])(?=/|$)", expanded)
+        if drive:
+            expanded = f"{drive[1]}:" + (expanded[2:] or "/")
+    path = Path(expanded)
+    return path if path.is_absolute() else base / path
+
+
+# 会改变后续命令工作目录的命令。PowerShell 侧的别名未经 pwshcmds 归一，一并列出。
+CHDIR_COMMANDS = frozenset({"cd", "pushd", "chdir", "set-location", "sl", "push-location"})
 
 
 def check_git(commands: list[Command], cwd: str) -> None:
+    # 按顺序跟踪 cd，否则 `cd 某仓库 && git reset --hard` 的快照会落到会话 cwd 上。
+    # 子 shell 与 `cd -` 的作用域不做还原：判错的代价只是多检查一个目录，快照本身无害。
+    current = Path(cwd)
     for cmd in commands:
+        if cmd.name in CHDIR_COMMANDS:
+            targets = [a for a in cmd.args if not a.startswith("-")]
+            if not cmd.args:
+                current = Path.home()
+            elif targets:
+                current = resolve_dir(targets[0], current)
+            continue
         if cmd.name != "git":
             continue
         subcommand, workdir = git_subcommand(cmd.args)
         if subcommand is None:
             continue
 
-        repo = Path(workdir) if workdir else Path(cwd)
+        repo = resolve_dir(workdir, current) if workdir else current
         if not repo.is_dir():
             continue
         toplevel = git(repo, "rev-parse", "--show-toplevel")
