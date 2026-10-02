@@ -1,0 +1,6 @@
+{
+  "name": "footer",
+  "version": "0.1.0",
+  "description": "Puts git status and usage meters on the prompt hint row, replacing the status line",
+  "author": { "name": "NihilDigit" }
+}

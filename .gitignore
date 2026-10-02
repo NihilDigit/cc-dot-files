@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 *.bak
+# engine 加载 mod 时生成的类型声明，随 Claude Code 版本变化
+mods/*/.claude-plugin/types/

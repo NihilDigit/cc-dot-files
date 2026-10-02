@@ -1,6 +1,6 @@
 # cc-dot-files
 
-Claude Code 的配置：全局 `CLAUDE.md`、statusline，以及一套硬门控。
+Claude Code 的配置：全局 `CLAUDE.md`、一个替代 statusline 的 footer mod，以及一套硬门控。
 
 硬门控是两个 PreToolUse hook 加一个 PATH 替身，把四条约束变成 Claude Code 绕不过去的机制：改文件前必有备份、删除一律进回收站、破坏性 git 命令执行前必有快照、全局安装一律拒绝。这些规则由 hook 强制执行，不依赖模型自觉，也不依赖 CLAUDE.md 里写没写。
 
@@ -79,7 +79,7 @@ sh install.sh
 
 脚本把文件软链到 `~/.claude/` 下的对应位置，不覆盖已存在的文件，并在 PATH 中安装替身入口（见下节）。
 
-`settings.json` 只合并 `hooks` 一个键，其余原样保留：同一个文件里 `hooks` 是跨机器共享的，`model`、`statusLine`、`tui` 之类是本机口味，整文件同步会把后者一起冲掉。合并前先备份成 `settings.json.<时间戳>.bak`。模板里的 `~/.claude` 在合并时展开成实际路径 —— hook command 由哪个 shell 执行没有保证，波浪号能否展开不可依赖。
+`settings.json` 只合并 `hooks` 与 `env.CLAUDE_CODE_PLUGIN_DIRS`，其余原样保留：同一个文件里这两项是跨机器共享的，`model`、`tui` 之类是本机口味，整文件同步会把后者一起冲掉。合并前先备份成 `settings.json.<时间戳>.bak`。模板里的 `~/.claude` 在合并时展开成实际路径 —— hook command 由哪个 shell 执行没有保证，波浪号能否展开不可依赖。
 
 ## 替身入口放在哪
 
@@ -107,23 +107,23 @@ Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一�
 
 `/usr/bin/rm`、GNU tar 的 `--null -T -`、Python 3.10+ 在 Git Bash 中均可用，无需适配。
 
-## statusline
+## footer
 
-`statusline.py` 输出目录、分支、模型、上下文占比、配额与缓存状态，需在 `settings.json` 里自行指向：
+`mods/footer` 是一个 Claude Code mod，把原先 statusline 的内容并进 prompt 下方那一行，整个 footer 只占一行：
 
-```json
-"statusLine": { "type": "command", "command": "python3 \"$HOME/.claude/statusline.py\"" }
+```
+⏵⏵ auto mode on · C:/Codes/cc-dot-files · Opus           ✓   ctx ██░░░░ 331k/1M   5h/7d ▀▀▀▀▀▀ 2% 5h / 90% 2d
 ```
 
-上下文条取 Claude Code 给出的 `used_percentage`，分母为模型的上下文窗口。
+左侧是 Claude Code 自己的权限模式 pill，后接工作目录与模型系列名。宽度不足时目录按 fish 的 `prompt_pwd` 缩写，中间各级只留首字符。
 
-5h 配额常显；7d 配额达到 60% 才显示。达到 60% 后附重置时刻，24 小时内为 `⧖14:30`，更远为 `⧖9/25`。Claude Code 只在事件发生时重跑 statusline，闲置期间屏幕不变，倒计时会停在过时的数上，绝对时刻则不会。
+右侧依次是 git 状态、上下文与配额。git 状态只列非零项，工作区干净时显示一个勾；分支名只在不处于 `main`、`master` 时显示。上下文条按窗口占比填充，后接已用与总量。5h 与 7d 两个配额窗口叠在同一格高度里，上半格是 5h，下半格是 7d，右侧按同样顺序写用量与距重置的时间。达到 75%（上下文）或 60%（配额）变黄，90% 或 85% 变红。
 
-prompt cache 过期后显示 `❄ 450k`，数字为下一条消息需重新缓存的 token 数，提示此时发消息的成本。Claude Code 在缓存到达 `expires_at` 时会重跑 statusline，无需设 `refreshInterval`。
+两种情况会在 prompt 上方右端出提醒：上下文超过 512k token，提示收尾并 compact；距上次回复超过一小时，提示 prompt cache 已失效，数字为下一条消息需重新缓存的 token 数。mod 读不到缓存的真实状态，后者按 1 小时 TTL 推算，进入 overage 后 TTL 降为 5 分钟，提示会偏晚。提醒只在需要时出现，因为 prompt 上方的区域与输入框之间还隔着一行 Claude Code 自带的空白，常驻会让 footer 多占两行。
 
-分支与改动状态由一次 `git status --porcelain=v2 --branch` 取得，不直接读 `.git/HEAD`：linked worktree 里 `.git` 是文件，从仓库子目录启动时当前目录下没有 `.git`，两种情况都读不到。
+图标来自 Nerd Font，配色按 One Dark 取值，换浅色主题时要改 `register.ts` 里的 `HEX`。
 
-出错时打印一行红字而不是留空：statusline 静默失效和「没配置」在界面上长得一样，会被当成配置没生效而去改 `settings.json`，查错方向从一开始就是偏的。
+`install.sh` 把本仓库的 `mods/footer` 写进 `settings.json` 的 `env.CLAUDE_CODE_PLUGIN_DIRS`，效果等同每次启动都带 `--plugin-dir`，改动保存后在运行中的会话里热重载。
 
 ## 文件对应
 
@@ -135,7 +135,7 @@ prompt cache 过期后显示 `❄ 450k`，数字为下一条消息需重新缓�
 | `pwshcmds.py` | `~/.claude/hooks/lib/pwshcmds.py` |
 | `rm.sh` | `~/.claude/shim/rm` |
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` |
-| `statusline.py` | `~/.claude/statusline.py` |
+| `mods/footer/` | 不复制，由 `settings.json` 的 `env.CLAUDE_CODE_PLUGIN_DIRS` 直接指向 |
 | `settings.hooks.json` | 合并进 `~/.claude/settings.json` 的 `hooks` 键 |
 
 `CLAUDE.md` 末尾导入 `@LOCAL.md`，本机特定的环境信息放在那里，不进本仓库。

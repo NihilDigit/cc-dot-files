@@ -70,7 +70,6 @@ link shellcmds.py   hooks/lib/shellcmds.py
 link pwshcmds.py    hooks/lib/pwshcmds.py
 link rm.sh          shim/rm
 link CLAUDE.md      CLAUDE.md
-link statusline.py  statusline.py
 
 chmod +x "$SRC/rm.sh" "$SRC/guard-shell.py" "$SRC/guard-edit.py"
 
@@ -78,6 +77,11 @@ chmod +x "$SRC/rm.sh" "$SRC/guard-shell.py" "$SRC/guard-edit.py"
 # settings.json 引用，但留着会让人以为规则还在那边，故明确报出来由你处置。
 if [ -e "$DEST/hooks/guard-bash.py" ]; then
     echo "残留    hooks/guard-bash.py（已更名为 guard-shell.py，此文件不再被引用，可删）" >&2
+fi
+# statusline.py 已由 mods/footer 取代。旧软链此时悬空，settings.json 里若还留着
+# statusLine，会在 prompt 下多出一行报错。
+if [ -e "$DEST/statusline.py" ] || [ -L "$DEST/statusline.py" ]; then
+    echo "残留    statusline.py（已由 mods/footer 取代，可删；settings.json 的 statusLine 一并删掉）" >&2
 fi
 
 # CLAUDE.md 末尾导入 @LOCAL.md，本机特定信息放在那里，不进本仓库。
@@ -135,8 +139,14 @@ else
     echo "    sudo sh -c 'printf \"#!/bin/sh\\nexec \\\"$DEST/shim/rm\\\" \\\"\\\$@\\\"\\n\" > /usr/local/bin/rm && chmod +x /usr/local/bin/rm'" >&2
 fi
 
-# settings.json 只合并 hooks 一个键，不整文件覆盖：同一个文件里 hooks 是跨机器
-# 共享的，model、statusLine、tui 之类是本机口味，整文件同步会把后者一起冲掉。
+# settings.json 只合并 hooks 与 env.CLAUDE_CODE_PLUGIN_DIRS，不整文件覆盖：同一个
+# 文件里这两项是跨机器共享的，model、tui 之类是本机口味，整文件同步会把后者一起冲掉。
+#
+# mod 经 CLAUDE_CODE_PLUGIN_DIRS 加载，效果同每次启动都带 --plugin-dir，改动保存即
+# 热重载。不走 marketplace 安装：那会把插件拷进缓存，仓库里的改动要重装才生效。
+# 变量直接指向本仓库的目录，不经 ~/.claude 软链：Git Bash 下 ln -s 会静默拷贝，
+# 而 link() 只会刷新拷贝来的文件，拷贝来的目录此后一直停在旧版本。
+# 变量里可能已有别的目录，只追加本仓库的，不覆盖。
 #
 # 合并时把模板里的 ~/.claude 展开成 $DEST 的实际路径。hook command 由哪个 shell
 # 执行没有保证，波浪号能否展开不可依赖；展开之后本机路径也不必写进仓库。
@@ -144,13 +154,14 @@ fi
 # Git Bash 下 $DEST 以 /c/... 传入，MSYS 会在交给原生 Windows python 时转成
 # C:/...，写进 settings.json 的正是转换后的形式。这是对的：跑 hook 的也是同一个
 # Windows python，它读不了 /c/... 这种路径。
-python3 - "$SRC/settings.hooks.json" "$DEST" <<'PY'
+# PYTHONUTF8：中文 Windows 上 python 的 stdout 默认 cp936，下面的提示会变成乱码
+PYTHONUTF8=1 python3 - "$SRC/settings.hooks.json" "$DEST" "$SRC" <<'PY'
 import json
 import os
 import sys
 import time
 
-template_path, dest = sys.argv[1], sys.argv[2]
+template_path, dest, repo = sys.argv[1], sys.argv[2], sys.argv[3]
 settings_path = os.path.join(dest, "settings.json")
 
 with open(template_path, encoding="utf-8") as fh:
@@ -166,8 +177,24 @@ except FileNotFoundError:
 except ValueError as exc:
     sys.exit(f"{settings_path} 不是合法 JSON（{exc}），已跳过 hooks 合并，请先修复")
 
-if settings.get("hooks") == hooks:
-    print("已就位  settings.json 的 hooks")
+changed = []
+
+if settings.get("hooks") != hooks:
+    changed.append("hooks")
+
+# 分隔符按 Windows python 取 ;，其余平台取 :，与 Claude Code 的解析一致
+env = settings.get("env") or {}
+old_dirs = [d for d in env.get("CLAUDE_CODE_PLUGIN_DIRS", "").split(os.pathsep) if d]
+footer = os.path.join(repo, "mods", "footer").replace("\\", "/")
+# 仓库移动后旧路径已不存在，留着只会让 Claude Code 每次启动报一个加载失败
+mod_dirs = [d for d in old_dirs if not (d.endswith("/mods/footer") and d != footer and not os.path.isdir(d))]
+if footer not in mod_dirs:
+    mod_dirs.append(footer)
+if mod_dirs != old_dirs:
+    changed.append("env.CLAUDE_CODE_PLUGIN_DIRS")
+
+if not changed:
+    print("已就位  settings.json 的 hooks 与 env.CLAUDE_CODE_PLUGIN_DIRS")
     sys.exit()
 
 if os.path.exists(settings_path):
@@ -177,10 +204,11 @@ if os.path.exists(settings_path):
     print(f"已备份  {os.path.basename(backup)}")
 
 settings["hooks"] = hooks
+settings["env"] = {**env, "CLAUDE_CODE_PLUGIN_DIRS": os.pathsep.join(mod_dirs)}
 with open(settings_path, "w", encoding="utf-8") as fh:
     json.dump(settings, fh, ensure_ascii=False, indent=2)
     fh.write("\n")
-print("已更新  settings.json 的 hooks（其余键原样保留）")
+print(f"已更新  settings.json 的 {'、'.join(changed)}（其余键原样保留）")
 PY
 echo
 echo "安装后需实测确认：在 Claude Code 中执行 command -v rm，"
