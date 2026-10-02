@@ -1,4 +1,4 @@
-﻿# 弹一条 Windows toast。标题、正文与可选的细节行经环境变量传入，事先做过 URL 编码：
+﻿# 弹一条 Windows toast。正文与可选的细节行经环境变量传入，事先做过 URL 编码：
 # 免去命令行引号转义，也避开中文 Windows 上 stdin 默认按 GBK 解码。
 #
 # 必须由 Windows PowerShell 5.1 执行：pwsh 7 不能直接加载 WinRT 类型。
@@ -21,14 +21,13 @@ if ((Get-ItemProperty -Path $key -Name IconUri -ErrorAction SilentlyContinue).Ic
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 
-$title = [Security.SecurityElement]::Escape([Uri]::UnescapeDataString($env:CC_TOAST_TITLE))
 $body = [Security.SecurityElement]::Escape([Uri]::UnescapeDataString($env:CC_TOAST_BODY))
 $detail = [Security.SecurityElement]::Escape([Uri]::UnescapeDataString($env:CC_TOAST_DETAIL))
 # 第三行可选，空则不写，免得 toast 底部多一行空白
 $detailXml = if ($detail) { "<text>$detail</text>" } else { "" }
 
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-$xml.LoadXml("<toast><visual><binding template=`"ToastGeneric`"><text>$title</text><text>$body</text>$detailXml</binding></visual></toast>")
+$xml.LoadXml("<toast><visual><binding template=`"ToastGeneric`"><text>$body</text>$detailXml</binding></visual></toast>")
 
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show(
     [Windows.UI.Notifications.ToastNotification]::new($xml))

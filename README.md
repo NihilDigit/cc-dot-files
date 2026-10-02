@@ -129,10 +129,9 @@ Claude Code 自带的桌面通知只在 Ghostty、Kitty、iTerm2 里发。`mods/
 
 ![notify 图标](mods/notify/icon.png)
 
-通知来源显示为 Claude Code，标题为项目目录名，正文按通知类型换成一句口吻轻松的话，Claude Code 的原文放在第三行，例如：
+通知来源显示为 Claude Code。正文按通知类型换成一句口吻轻松的话，Claude Code 的原文放在下一行，例如：
 
 ```
-cc-dot-files
 Psst… may I? Need your OK to keep going
 Claude needs your permission to use Bash
 ```

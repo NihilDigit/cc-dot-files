@@ -23,14 +23,12 @@ export const register: Register = on => {
     if ((await $.env.get('OS')) !== 'Windows_NT') return result
 
     const systemRoot = (await $.env.get('SystemRoot')) ?? 'C:\\Windows'
-    const project = e.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || e.cwd
     const cheer = CHEER[e.notification_type]
     // 不等进程结束：起 powershell 加载 WinRT 要几百毫秒，没必要拖住 engine 的通知流程
     void $.process.run(
       [`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', `${$.plugin.root}/notify.ps1`],
       { env: {
-        CC_TOAST_TITLE: encodeURIComponent(project),
         CC_TOAST_BODY: encodeURIComponent(cheer ?? e.message),
         CC_TOAST_DETAIL: encodeURIComponent(cheer ? e.message : ''),
       }, timeoutMs: 10_000 },
