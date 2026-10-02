@@ -1,0 +1,6 @@
+{
+  "name": "notify",
+  "version": "0.1.0",
+  "description": "Shows a Windows toast when Claude Code finishes or needs input",
+  "author": { "name": "NihilDigit" }
+}

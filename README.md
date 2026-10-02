@@ -1,6 +1,6 @@
 # cc-dot-files
 
-Claude Code 的配置：全局 `CLAUDE.md`、一个替代 statusline 的 footer mod，以及一套硬门控。
+Claude Code 的配置：全局 `CLAUDE.md`、两个 mod（替代 statusline 的 footer、Windows 上的完成通知），以及一套硬门控。
 
 硬门控是两个 PreToolUse hook 加一个 PATH 替身，把四条约束变成 Claude Code 绕不过去的机制：改文件前必有备份、删除一律进回收站、破坏性 git 命令执行前必有快照、全局安装一律拒绝。这些规则由 hook 强制执行，不依赖模型自觉，也不依赖 CLAUDE.md 里写没写。
 
@@ -123,7 +123,25 @@ Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一�
 
 图标来自 Nerd Font，配色按 One Dark 取值，换浅色主题时要改 `register.ts` 里的 `HEX`。
 
-`install.sh` 把本仓库的 `mods/footer` 写进 `settings.json` 的 `env.CLAUDE_CODE_PLUGIN_DIRS`，效果等同每次启动都带 `--plugin-dir`，改动保存后在运行中的会话里热重载。
+## notify
+
+Claude Code 自带的桌面通知只在 Ghostty、Kitty、iTerm2 里发。`mods/notify` 在 Windows 上补一条 toast：任务完成或停在权限确认、且人不在终端前时弹出，触发时机沿用 Claude Code 自己的 Notification 事件。
+
+![notify 图标](mods/notify/icon.png)
+
+通知来源显示为 Claude Code，标题为项目目录名，正文按通知类型换成一句口吻轻松的话，Claude Code 的原文放在第三行，例如：
+
+```
+cc-dot-files
+Psst… may I? Need your OK to keep going
+Claude needs your permission to use Bash
+```
+
+点击通知不会做任何事。来源 ID 是 `notify.ps1` 在 `HKCU\Software\Classes\AppUserModelId\ClaudeCode.Notify` 下自行登记的，只带名字与图标，背后没有可启动的程序；借用 Windows Terminal 的 ID 会在点击时新开一个终端窗口。其他平台上此 mod 不做任何事。
+
+## mod 的加载
+
+`install.sh` 把 `mods/` 下的每个 mod 写进 `settings.json` 的 `env.CLAUDE_CODE_PLUGIN_DIRS`，效果等同每次启动都带 `--plugin-dir`，改动保存后在运行中的会话里热重载。变量直接指向本仓库，不经 `~/.claude` 中转：Git Bash 下 `ln -s` 对目录会静默拷贝，拷贝出的目录此后不随仓库更新。
 
 ## 文件对应
 
@@ -135,7 +153,7 @@ Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一�
 | `pwshcmds.py` | `~/.claude/hooks/lib/pwshcmds.py` |
 | `rm.sh` | `~/.claude/shim/rm` |
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` |
-| `mods/footer/` | 不复制，由 `settings.json` 的 `env.CLAUDE_CODE_PLUGIN_DIRS` 直接指向 |
+| `mods/footer/`、`mods/notify/` | 不复制，由 `settings.json` 的 `env.CLAUDE_CODE_PLUGIN_DIRS` 直接指向 |
 | `settings.hooks.json` | 合并进 `~/.claude/settings.json` 的 `hooks` 键 |
 
 `CLAUDE.md` 末尾导入 `@LOCAL.md`，本机特定的环境信息放在那里，不进本仓库。

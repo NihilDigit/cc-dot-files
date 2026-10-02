@@ -146,7 +146,8 @@ fi
 # 热重载。不走 marketplace 安装：那会把插件拷进缓存，仓库里的改动要重装才生效。
 # 变量直接指向本仓库的目录，不经 ~/.claude 软链：Git Bash 下 ln -s 会静默拷贝，
 # 而 link() 只会刷新拷贝来的文件，拷贝来的目录此后一直停在旧版本。
-# 变量里可能已有别的目录，只追加本仓库的，不覆盖。
+# mods/ 下每个带 .claude-plugin/plugin.json 的目录都登记进去。变量里可能已有别的目录，
+# 只追加本仓库的，不覆盖。
 #
 # 合并时把模板里的 ~/.claude 展开成 $DEST 的实际路径。hook command 由哪个 shell
 # 执行没有保证，波浪号能否展开不可依赖；展开之后本机路径也不必写进仓库。
@@ -185,11 +186,19 @@ if settings.get("hooks") != hooks:
 # 分隔符按 Windows python 取 ;，其余平台取 :，与 Claude Code 的解析一致
 env = settings.get("env") or {}
 old_dirs = [d for d in env.get("CLAUDE_CODE_PLUGIN_DIRS", "").split(os.pathsep) if d]
-footer = os.path.join(repo, "mods", "footer").replace("\\", "/")
+mods_root = os.path.join(repo, "mods")
+ours = sorted(
+    os.path.join(mods_root, name).replace("\\", "/")
+    for name in os.listdir(mods_root)
+    if os.path.isfile(os.path.join(mods_root, name, ".claude-plugin", "plugin.json"))
+)
 # 仓库移动后旧路径已不存在，留着只会让 Claude Code 每次启动报一个加载失败
-mod_dirs = [d for d in old_dirs if not (d.endswith("/mods/footer") and d != footer and not os.path.isdir(d))]
-if footer not in mod_dirs:
-    mod_dirs.append(footer)
+names = {d.rsplit("/", 1)[-1] for d in ours}
+def is_stale(d):
+    parent, _, name = d.rpartition("/")
+    return parent.endswith("/mods") and name in names and d not in ours and not os.path.isdir(d)
+mod_dirs = [d for d in old_dirs if not is_stale(d)]
+mod_dirs += [d for d in ours if d not in mod_dirs]
 if mod_dirs != old_dirs:
     changed.append("env.CLAUDE_CODE_PLUGIN_DIRS")
 
