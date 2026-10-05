@@ -34,12 +34,12 @@ Claude Code 在 Windows 上除 Bash 工具外还有一个 PowerShell 工具，�
 
 替身在 PowerShell 里没有介入的机会。`rm`、`del`、`ri`、`rd`、`erase` 都是 `Remove-Item` 的内建别名，而 PowerShell 的名字解析顺序是别名 → 函数 → cmdlet → 外部命令，PATH 排在最后。函数覆盖那条路也走不通：Claude Code 以 `-NoProfile` 启动 `pwsh`，profile 里定义的 `rm` 函数根本不加载。
 
-因此 PowerShell 侧一律拒绝文件删除，提示改用 `trash`。这要求本机有一个 PowerShell 能解析的 `trash` —— 无扩展名的 shell 脚本不行，PowerShell 会报 `Cannot run a document`，需要 `trash.ps1` 一类按 PATHEXT 能找到的入口。
+因此 PowerShell 侧一律拒绝文件删除，提示改用 `trash`。这要求本机有一个 PowerShell 能解析的 `trash` —— 无扩展名的 shell 脚本不行，PowerShell 会报 `Cannot run a document`，所以 `install.sh` 另装一个 `trash.ps1` 入口，见下文「Windows（Git Bash）」一节。
 
 三处 PowerShell 特有的判定：
 
 - `Remove-Item Alias:rm`、`Remove-Item Env:FOO` 删的是别名和环境变量，不是文件，按 provider 前缀放行。
-- `[IO.File]::Delete(...)`、`$item.Delete()` 是表达式而非命令，命令词的判定不适用，只能按文本匹配。带 `SendToRecycleBin` 的调用是回收站删除（`trash` 自身就这么实现），放行。
+- `[IO.File]::Delete(...)`、`$item.Delete()` 是表达式而非命令，命令词的判定不适用，只能按文本匹配。带 `SendToRecycleBin` 的调用是回收站删除，放行。
 - `-EncodedCommand` 的参数是 UTF-16LE 的 base64，会解码后再解析，否则等于留一个明面上的绕过口。
 
 `pwsh -Command "..."`、`Invoke-Expression`、双引号里的 `$(...)` 都会递归展开。PowerShell 里的 `bash -c` 解析到的是 WSL 的 bash，其中的命令按 POSIX 策略判定 —— WSL 侧装着同一套替身，普通 `rm` 在那边仍有兜底。
@@ -71,7 +71,7 @@ sh -c 'cd /tmp && rm -rf junk'       # -c 的参数递归展开
 
 ## 安装
 
-依赖 Python 3.10 以上、git、[trash-cli](https://github.com/andreafrancia/trash-cli)。
+依赖 Python 3.10 以上、git；Linux 另需 [trash-cli](https://github.com/andreafrancia/trash-cli)，Windows 另需 PowerShell 7（`pwsh`）。
 
 ```sh
 sh install.sh
@@ -103,7 +103,11 @@ Claude Code 在 Windows 上把 Bash 工具跑在 Git Bash 里，与 Linux 原生
 
 Git for Windows 默认 `core.autocrlf=true`，会把 `rm.sh` 检出成 CRLF，shebang 变为 `#!/bin/sh\r`，替身无法执行。仓库根目录的 `.gitattributes` 强制以 LF 检出。
 
-Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，需自备一个把参数送进 Windows 回收站的同名脚本。两个 shell 各需一个入口：Git Bash 不执行 `.ps1`，PowerShell 不执行无扩展名脚本，所以是 `trash` 与 `trash.ps1` 两个文件，实现只留一份，前者转发给后者。
+Git Bash 下没有 `trash-put`。`rm.sh` 会退而使用 `trash`，由本仓库的 `trash.ps1` 实现：经 `SHFileOperation` 把字面路径送进回收站，删不掉的路径报错并以非零退出。两个 shell 各需一个入口：Git Bash 不执行 `.ps1`，PowerShell 不执行无扩展名脚本，所以 `install.sh` 在替身入口所在目录写 `trash` 与 `trash.ps1` 两个转发，都指向 `~/.claude/shim/trash.ps1`。
+
+不用 npm 的 [trash-cli](https://github.com/sindresorhus/trash-cli)：它先把参数交给 globby 做通配匹配，再只删匹配到的结果，而 globby 把反斜杠当转义符，`C:\...` 形式的路径一个也匹配不上，结果什么都没删、退出码仍为 0。`$LOCALAPPDATA` 一类环境变量展开出来正是这种路径，删除失败看起来与成功一样。
+
+`trash.ps1` 不用 `Microsoft.VisualBasic` 的 `FileSystem.DeleteFile`：它出错时（文件被占用）仍弹对话框，无人值守的调用会卡住。`SHFileOperation` 带 `FOF_NOERRORUI` 时错误变成返回码；代价是不能同时要「超出回收站容量时警告」，那也是一个对话框，所以这类项会被直接永久删除。互操作代码首次运行时编译，缓存在 `%LOCALAPPDATA%\cc-dot-files\`，之后每次调用约 0.9 秒，主要是 `pwsh` 的启动时间。
 
 `/usr/bin/rm`、GNU tar 的 `--null -T -`、Python 3.10+ 在 Git Bash 中均可用，无需适配。
 

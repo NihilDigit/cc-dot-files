@@ -130,9 +130,31 @@ write_forwarder() {
     chmod +x "$1"
 }
 
+# Windows 的回收站命令。实现是 trash.ps1，入口两个：Git Bash 不执行 .ps1，PowerShell
+# 不执行无扩展名脚本。两个入口都写进 ANCHOR，与 rm 替身同一目录，Claude Code 的两个
+# 工具都继承得到它。转发里写死 pwsh 与实现的 Windows 路径：trash.ps1 用到 .NET 5 起
+# 才有的 API，Windows PowerShell 5.1 跑不了；pwsh 是原生程序，读不了 /c/... 形式的路径。
+write_trash_forwarders() {
+    impl=$(cygpath -m "$DEST/shim/trash.ps1")
+    printf '#!/bin/sh\n# 由 cc-dot-files 的 install.sh 生成。实现在 %s。\nexec pwsh -NoProfile -NonInteractive -File "%s" "$@"\n' \
+        "$impl" "$impl" > "$1/trash"
+    chmod +x "$1/trash"
+    printf '# 由 cc-dot-files 的 install.sh 生成。实现在 %s。\n& "%s" @args\nexit $LASTEXITCODE\n' \
+        "$impl" "$impl" > "$1/trash.ps1"
+}
+
 if [ -n "$ANCHOR" ]; then
     write_forwarder "$ANCHOR/rm"
     echo "已就位  $ANCHOR/rm（替身入口，先于 $REAL_DIR/rm）"
+    case "${OSTYPE:-}" in
+        msys* | cygwin*)
+            link trash.ps1 shim/trash.ps1
+            write_trash_forwarders "$ANCHOR"
+            echo "已就位  $ANCHOR/trash 与 trash.ps1（回收站入口）"
+            command -v pwsh >/dev/null 2>&1 \
+                || echo "警告：未找到 pwsh，trash 无法运行。装 PowerShell 7（winget install Microsoft.PowerShell）" >&2
+            ;;
+    esac
 else
     echo "未找到可写且排在 $REAL_DIR 之前的 PATH 目录。" >&2
     echo "请手动放置转发脚本，例如：" >&2
@@ -224,8 +246,8 @@ echo "安装后需实测确认：在 Claude Code 中执行 command -v rm，"
 echo "结果应为上面那个替身入口的路径。若为 $REAL_DIR/rm，说明未生效。"
 echo
 echo "PowerShell 工具不靠替身：rm 是 Remove-Item 的别名，替身没有介入的机会，"
-echo "hook 直接拒绝删除。那边需要一个 PowerShell 能解析的 trash（如 trash.ps1），"
-echo "否则拒绝之后没有可用的替代命令。用 Get-Command trash 确认。"
+echo "hook 直接拒绝删除，改用 trash。Windows 上上面已装好 trash.ps1 入口，"
+echo "在 PowerShell 中用 Get-Command trash 确认它解析到那个入口。"
 echo
 if [ "$COPIED" = 1 ]; then
     echo "本次为拷贝安装。要改规则请改本仓库再重跑 install.sh，不要直接改 $DEST 下的副本。" >&2
@@ -234,4 +256,4 @@ if [ "$COPIED" = 1 ]; then
 fi
 
 command -v trash-put >/dev/null 2>&1 || command -v trash >/dev/null 2>&1 \
-    || echo "警告：未找到 trash-put 或 trash，rm 替身会直接拒绝执行。Linux 装 trash-cli；Windows 需自备封装回收站的 trash" >&2
+    || echo "警告：未找到 trash-put 或 trash，rm 替身会直接拒绝执行。Linux 装 trash-cli；Windows 上由本脚本安装 trash" >&2

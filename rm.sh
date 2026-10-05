@@ -18,13 +18,11 @@ if [ -n "$CLAUDE_ALLOW_RM" ]; then
 fi
 
 # 回收站命令按平台取。Linux 用 trash-cli 的 trash-put；Git Bash 下没有它，
-# 改用封装 Windows 回收站的 trash。后者不接受 `--` 分隔符，故分别记录。
+# 改用本仓库 trash.ps1 的入口 trash。
 if command -v trash-put >/dev/null 2>&1; then
     TRASH=trash-put
-    TRASH_SEP=--
 elif command -v trash >/dev/null 2>&1; then
     TRASH=trash
-    TRASH_SEP=
 else
     echo "rm: 未找到 trash-put 或 trash，拒绝删除。请安装 trash-cli，或加 CLAUDE_ALLOW_RM=1 前缀执行不可恢复的删除" >&2
     exit 1
@@ -85,9 +83,6 @@ done
 
 [ $# -eq 0 ] && exit "$missing"
 
-if [ -n "$TRASH_SEP" ]; then
-    "$TRASH" "$TRASH_SEP" "$@" || exit $?
-else
-    "$TRASH" "$@" || exit $?
-fi
+# 两种回收站命令都认 --，操作数以 - 开头时不会被当成选项。
+"$TRASH" -- "$@" || exit $?
 exit "$missing"
